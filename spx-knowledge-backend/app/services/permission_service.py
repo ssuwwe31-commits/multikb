@@ -24,6 +24,10 @@ ROLE_ACTION_MATRIX: Dict[str, List[str]] = {
         "doc:upload",
         "doc:edit",
         "doc:delete",
+        "kg:view",
+        "kg:edit",
+        "kg:extract",
+        "kg:delete",
     ],
     "admin": [
         "kb:view",
@@ -33,6 +37,10 @@ ROLE_ACTION_MATRIX: Dict[str, List[str]] = {
         "doc:upload",
         "doc:edit",
         "doc:delete",
+        "kg:view",
+        "kg:edit",
+        "kg:extract",
+        "kg:delete",
     ],
     "editor": [
         "kb:view",
@@ -40,10 +48,14 @@ ROLE_ACTION_MATRIX: Dict[str, List[str]] = {
         "doc:upload",
         "doc:edit",
         "doc:delete",  # 简化方案：允许删除任意文档，操作记录由上层负责
+        "kg:view",
+        "kg:edit",
+        "kg:extract",
     ],
     "viewer": [
         "kb:view",
         "doc:view",
+        "kg:view",
     ],
 }
 

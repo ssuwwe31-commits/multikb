@@ -338,6 +338,12 @@ class Settings(BaseSettings):
     
     # 分块存储策略
     STORE_CHUNK_TEXT_IN_DB: bool = False
+    
+    # NebulaGraph配置
+    USE_NEBULA_GRAPH: bool = False  # 是否启用NebulaGraph
+    NEBULA_HOSTS: List[tuple] = [("127.0.0.1", 9669)]  # NebulaGraph地址列表
+    NEBULA_USER: str = "root"  # NebulaGraph用户名
+    NEBULA_PASSWORD: str = "password"  # NebulaGraph密码
 
     # 兼容历史环境变量（忽略未使用但不报错）
     SOFFICE_PATH: Optional[str] = None  # 旧的 libreoffice 路径，当前未使用

@@ -128,6 +128,104 @@ services:
     networks:
       - spx-network
 
+  # ============================================
+  # NebulaGraph 图数据库服务
+  # ============================================
+  nebula-metad:
+    image: vesoft/nebula-metad:v3.8.0
+    container_name: spx-knowledge-nebula-metad
+    restart: always
+    environment:
+      - USER=root
+    ports:
+      - "${NEBULA_METAD_PORT:-9559}:9559"
+    volumes:
+      - nebula_metad_data:/data/meta
+      - nebula_metad_logs:/logs
+    command:
+      - --meta_server_addrs=nebula-metad:9559
+      - --local_ip=0.0.0.0
+      - --ws_ip=nebula-metad
+      - --port=9559
+      - --ws_http_port=19559
+      - --ws_h2_port=19560
+      - --data_path=/data/meta
+      - --log_dir=/logs
+      - --v=0
+      - --minloglevel=0
+    networks:
+      - spx-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:19559/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  nebula-storaged:
+    image: vesoft/nebula-storaged:v3.8.0
+    container_name: spx-knowledge-nebula-storaged
+    restart: always
+    environment:
+      - USER=root
+    ports:
+      - "${NEBULA_STORAGED_PORT:-9779}:9779"
+      - "${NEBULA_STORAGED_HTTP_PORT:-19779}:19779"
+    volumes:
+      - nebula_storaged_data:/data/storage
+      - nebula_storaged_logs:/logs
+    command:
+      - --meta_server_addrs=nebula-metad:9559
+      - --local_ip=0.0.0.0
+      - --ws_ip=nebula-storaged
+      - --port=9779
+      - --ws_http_port=19779
+      - --ws_h2_port=19780
+      - --data_path=/data/storage
+      - --log_dir=/logs
+      - --v=0
+      - --minloglevel=0
+    depends_on:
+      - nebula-metad
+    networks:
+      - spx-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:19779/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  nebula-graphd:
+    image: vesoft/nebula-graphd:v3.8.0
+    container_name: spx-knowledge-nebula-graphd
+    restart: always
+    environment:
+      - USER=root
+    ports:
+      - "${NEBULA_GRAPHD_PORT:-9669}:9669"
+      - "${NEBULA_GRAPHD_HTTP_PORT:-19669}:19669"
+    volumes:
+      - nebula_graphd_logs:/logs
+    command:
+      - --meta_server_addrs=nebula-metad:9559
+      - --local_ip=0.0.0.0
+      - --ws_ip=nebula-graphd
+      - --port=9669
+      - --ws_http_port=19669
+      - --ws_h2_port=19670
+      - --log_dir=/logs
+      - --v=0
+      - --minloglevel=0
+    depends_on:
+      - nebula-metad
+      - nebula-storaged
+    networks:
+      - spx-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:19669/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
 networks:
   spx-network:
     driver: bridge
@@ -142,4 +240,14 @@ volumes:
   opensearch_data:
     driver: local
   opensearch_dashboards_data:
+    driver: local
+  nebula_metad_data:
+    driver: local
+  nebula_metad_logs:
+    driver: local
+  nebula_storaged_data:
+    driver: local
+  nebula_storaged_logs:
+    driver: local
+  nebula_graphd_logs:
     driver: local

@@ -21,6 +21,7 @@ celery_app = Celery(
         "app.tasks.notification_tasks",
         "app.tasks.observability_tasks",
         "app.tasks.security_scan_tasks",
+        "app.tasks.knowledge_graph_tasks",
     ]
 )
 

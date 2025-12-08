@@ -26,3 +26,9 @@ from app.models.document_toc import DocumentTOC  # noqa: F401
 from app.models.user_statistics import UserStatistics, DocumentTypeStatistics  # noqa: F401
 from app.models.export_task import ExportTask  # noqa: F401
 from app.models.qa_external_search import QAExternalSearchRecord  # noqa: F401
+from app.models.knowledge_graph import (  # noqa: F401
+    KnowledgeGraphEntity,
+    KnowledgeGraphRelationship,
+    KnowledgeGraphEntityDocument,
+    KnowledgeGraphExtractionTask,
+)
