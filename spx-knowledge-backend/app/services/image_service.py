@@ -70,6 +70,47 @@ class ImageService(BaseService[DocumentImage]):
         except Exception as e:
             return False, f"图片验证失败: {str(e)}"
     
+    def _preprocess_image_for_ocr(self, image_bytes: bytes, image_mime: str) -> bytes:
+        """预处理图片用于OCR：缩放、格式转换等"""
+        if not settings.OCR_PREPROCESS_ENABLED:
+            return image_bytes
+        
+        try:
+            img = Image.open(io.BytesIO(image_bytes))
+            original_width, original_height = img.size
+            
+            # 如果图片尺寸小于等于最大尺寸，不需要缩放
+            max_size = settings.OCR_PREPROCESS_MAX_SIZE
+            if original_width <= max_size and original_height <= max_size:
+                logger.debug(f"图片尺寸 {original_width}x{original_height} 无需缩放")
+                return image_bytes
+            
+            # 计算缩放比例，保持宽高比
+            ratio = min(max_size / original_width, max_size / original_height)
+            new_width = int(original_width * ratio)
+            new_height = int(original_height * ratio)
+            
+            logger.debug(f"图片预处理: {original_width}x{original_height} -> {new_width}x{new_height}")
+            
+            # 转换为RGB格式（OCR模型通常需要RGB）
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            
+            # 使用高质量重采样算法缩放
+            img_resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            
+            # 保存为JPEG格式（压缩比高，文件小）
+            output = io.BytesIO()
+            img_resized.save(output, format='JPEG', quality=85, optimize=True)
+            processed_bytes = output.getvalue()
+            
+            logger.debug(f"图片预处理完成: 原始大小={len(image_bytes)} bytes, 处理后={len(processed_bytes)} bytes")
+            return processed_bytes
+            
+        except Exception as e:
+            logger.warning(f"图片预处理失败，使用原始图片: {e}")
+            return image_bytes
+    
     def _perform_qwen_ocr(self, image_bytes: bytes, image_mime: str) -> str:
         # 先验证图片
         is_valid, error_msg = self._validate_image_bytes(image_bytes, image_mime)
@@ -77,10 +118,15 @@ class ImageService(BaseService[DocumentImage]):
             logger.warning(f"图片验证失败，跳过 OCR: {error_msg}")
             return ""  # 返回空字符串而不是抛出异常，允许继续处理
         
+        # 预处理图片（缩放、格式转换等）
+        processed_bytes = self._preprocess_image_for_ocr(image_bytes, image_mime)
+        # 如果预处理成功且改变了图片，使用JPEG格式；否则保持原始MIME类型
+        processed_mime = "image/jpeg" if (settings.OCR_PREPROCESS_ENABLED and processed_bytes != image_bytes) else image_mime
+        
         service = self._get_ollama_service()
         return service.extract_text_from_image(
-            image_bytes=image_bytes,
-            image_mime=image_mime,
+            image_bytes=processed_bytes,
+            image_mime=processed_mime,
         )
     
     def _mark_status(

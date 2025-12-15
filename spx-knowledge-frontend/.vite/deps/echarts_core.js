@@ -9,17 +9,16 @@ import {
   number_exports,
   time_exports,
   util_exports as util_exports2
-} from "./chunk-ST5UYAJK.js";
-import "./chunk-LEWAB2AR.js";
+} from "./chunk-6KYB4BAZ.js";
+import "./chunk-Z7P6V3HH.js";
+import "./chunk-H2IDPUMC.js";
+import "./chunk-T5AMOG7A.js";
 import {
   Axis_default,
   Chart_default,
-  Component_default,
-  Component_default2,
-  Model_default,
+  Component_default as Component_default2,
   PRIORITY,
   SeriesData_default,
-  Series_default,
   connect,
   dataTool,
   dependencies,
@@ -36,7 +35,6 @@ import {
   registerCoordinateSystem,
   registerLayout,
   registerLoading,
-  registerLocale,
   registerMap,
   registerPostInit,
   registerPostUpdate,
@@ -50,17 +48,25 @@ import {
   throttle,
   use,
   version
-} from "./chunk-ECJLLQHQ.js";
+} from "./chunk-TIKIBNSH.js";
+import {
+  Component_default,
+  Model_default,
+  Series_default,
+  registerLocale
+} from "./chunk-5A4CWV6Z.js";
 import {
   brushSingle,
+  zrender_exports
+} from "./chunk-57FDJHXZ.js";
+import {
   color_exports,
   env_default,
   matrix_exports,
   setPlatformAPI,
   util_exports,
-  vector_exports,
-  zrender_exports
-} from "./chunk-6YJGUZXM.js";
+  vector_exports
+} from "./chunk-AVPOS2AD.js";
 import "./chunk-Q4XP6UTR.js";
 export {
   Axis_default as Axis,

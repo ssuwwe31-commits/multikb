@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS `knowledge_graph_entities` (
     -- 唯一键约束：移除 is_deleted，避免逻辑删除后无法创建同名实体
     -- 注意：需要在应用层确保同一知识库下未删除的实体名称+类型唯一
     UNIQUE KEY `uk_kb_name_type` (`knowledge_base_id`, `name`, `type`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识图谱实体表（主存储，用于列表查询、统计查询、关联查询）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识图谱实体表（索引存储，完整数据优先存储在NebulaGraph）';
 
 -- ============================================
 -- 2. 知识图谱关系表
@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS `knowledge_graph_relationships` (
     -- 唯一键约束：移除 is_deleted，避免逻辑删除后无法创建同名关系
     -- 注意：需要在应用层确保未删除的关系唯一
     UNIQUE KEY `uk_source_target_relation` (`source_entity_id`, `target_entity_id`, `relation_type`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识图谱关系表（主存储，用于列表查询、统计查询）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识图谱关系表（索引存储，完整数据优先存储在NebulaGraph）';
 
 -- ============================================
 -- 3. 实体-文档关联表

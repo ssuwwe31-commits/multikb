@@ -1,0 +1,105 @@
+<template>
+  <div class="user-guide-version-management">
+    <div class="mb-8">
+      <h1 class="text-5xl font-bold mb-4 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">版本管理</h1>
+      <p class="text-xl text-gray-600">文档级和块级版本管理，版本恢复和对比</p>
+    </div>
+
+    <section class="mb-16">
+      <div class="flex items-center space-x-3 mb-6">
+        <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-xl">📄</div>
+        <h2 class="text-3xl font-bold text-gray-900">文档级版本</h2>
+      </div>
+
+      <div class="bg-gradient-to-br from-blue-50 to-purple-50 rounded-xl p-6 border-2 border-blue-100">
+        <div class="space-y-4">
+          <div>
+            <h3 class="text-lg font-bold text-gray-900 mb-2">版本历史</h3>
+            <p class="text-sm text-gray-700">每次文档修改都会创建新版本，记录完整的修改历史</p>
+          </div>
+          <div>
+            <h3 class="text-lg font-bold text-gray-900 mb-2">版本恢复</h3>
+            <ol class="list-decimal list-inside space-y-1 text-sm text-gray-700 ml-4">
+              <li>在文档详情页查看版本历史</li>
+              <li>选择要恢复的版本</li>
+              <li>点击"恢复到此版本"</li>
+              <li>系统会恢复文档到指定版本</li>
+            </ol>
+          </div>
+          <div>
+            <h3 class="text-lg font-bold text-gray-900 mb-2">版本对比</h3>
+            <p class="text-sm text-gray-700">可以对比不同版本之间的差异，查看具体修改内容</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="mb-16">
+      <div class="flex items-center space-x-3 mb-6">
+        <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center text-white text-xl">🧩</div>
+        <h2 class="text-3xl font-bold text-gray-900">块级版本</h2>
+      </div>
+
+      <div class="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-6 border-2 border-purple-100">
+        <div class="space-y-4">
+          <div>
+            <h3 class="text-lg font-bold text-gray-900 mb-2">块级版本控制</h3>
+            <p class="text-sm text-gray-700">每个文档分块都有独立的版本历史，可以精确追踪每个知识块的修改</p>
+          </div>
+          <div>
+            <h3 class="text-lg font-bold text-gray-900 mb-2">块级恢复</h3>
+            <ol class="list-decimal list-inside space-y-1 text-sm text-gray-700 ml-4">
+              <li>在文档详情页查看分块列表</li>
+              <li>点击要恢复的分块</li>
+              <li>查看该分块的版本历史</li>
+              <li>选择要恢复的版本并恢复</li>
+            </ol>
+          </div>
+          <div>
+            <h3 class="text-lg font-bold text-gray-900 mb-2">批量恢复</h3>
+            <p class="text-sm text-gray-700">支持批量恢复到上一个版本，快速撤销最近的修改</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="mb-16">
+      <div class="flex items-center space-x-3 mb-6">
+        <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-green-500 to-teal-600 flex items-center justify-center text-white text-xl">🔍</div>
+        <h2 class="text-3xl font-bold text-gray-900">版本对比</h2>
+      </div>
+
+      <div class="bg-gradient-to-br from-green-50 to-teal-50 rounded-xl p-6 border-2 border-green-100">
+        <div class="space-y-4">
+          <div>
+            <h3 class="text-lg font-bold text-gray-900 mb-2">对比两个版本</h3>
+            <ol class="list-decimal list-inside space-y-1 text-sm text-gray-700 ml-4">
+              <li>在版本历史中选择两个版本</li>
+              <li>点击"对比"按钮</li>
+              <li>查看差异高亮显示</li>
+              <li>了解具体修改内容</li>
+            </ol>
+          </div>
+          <div>
+            <h3 class="text-lg font-bold text-gray-900 mb-2">预览恢复效果</h3>
+            <p class="text-sm text-gray-700">在恢复前可以预览恢复后的效果，确认无误后再执行恢复</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="mt-16 p-6 rounded-xl bg-gradient-to-br from-blue-50 to-purple-50 border-2 border-blue-100">
+      <h3 class="text-xl font-bold text-gray-900 mb-4">相关资源</h3>
+      <div class="flex flex-wrap gap-3">
+        <router-link to="/docs/document-management" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">文档管理 →</router-link>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+</script>
+
+<style scoped>
+</style>
+

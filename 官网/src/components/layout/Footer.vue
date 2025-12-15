@@ -10,7 +10,7 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
             </div>
-            <span class="text-xl font-bold text-white">Knowledge Base</span>
+            <span class="text-xl font-bold text-white">Multikb Base</span>
           </div>
           <p class="text-sm text-gray-500 mb-6">
             企业级知识库管理平台
@@ -64,7 +64,7 @@
       </div>
 
       <div class="border-t border-gray-800 pt-8 text-center text-sm">
-        <p>Copyright © 2025 Knowledge Base. All rights reserved.</p>
+        <p>Copyright © 2025 Multikb Base. All rights reserved.</p>
       </div>
     </div>
   </footer>

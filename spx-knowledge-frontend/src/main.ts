@@ -12,7 +12,7 @@ import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import ECharts from 'vue-echarts'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
-import { LineChart, PieChart, BarChart } from 'echarts/charts'
+import { LineChart, PieChart, BarChart, GraphChart } from 'echarts/charts'
 import {
   TitleComponent,
   TooltipComponent,
@@ -27,6 +27,7 @@ use([
   LineChart,
   PieChart,
   BarChart,
+  GraphChart,  // 知识图谱可视化需要
   TitleComponent,
   TooltipComponent,
   LegendComponent,

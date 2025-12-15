@@ -1,7 +1,7 @@
 import { defineConfig } from 'vitepress'
 
 export default defineConfig({
-  title: 'Knowledge Base',
+  title: 'Multikb Base',
   description: '企业级知识库管理平台 - 唯一集成ClamAV安全扫描、支持9种文档格式、完整多模态能力',
   base: '/',
   
@@ -92,7 +92,7 @@ export default defineConfig({
     // 页脚
     footer: {
       message: 'Released under the MIT License.',
-      copyright: 'Copyright © 2025 Knowledge Base'
+      copyright: 'Copyright © 2025 Multikb Base'
     },
     
     // 返回顶部

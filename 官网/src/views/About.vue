@@ -26,7 +26,7 @@
           <div class="mb-16">
             <h2 class="text-4xl font-bold text-gray-900 dark:text-gray-100 mb-6">我们的使命</h2>
             <p class="text-lg text-gray-700 dark:text-gray-300 leading-relaxed mb-4">
-              Knowledge Base 致力于帮助企业构建高效、安全、智能的知识管理体系。我们相信，知识是企业最宝贵的资产，通过先进的技术手段，我们可以让知识的获取、管理和应用变得更加简单和高效。
+              Multikb Base 致力于帮助企业构建高效、安全、智能的知识管理体系。我们相信，知识是企业最宝贵的资产，通过先进的技术手段，我们可以让知识的获取、管理和应用变得更加简单和高效。
             </p>
             <p class="text-lg text-gray-700 dark:text-gray-300 leading-relaxed">
               我们的使命是成为企业知识管理的首选平台，通过持续的技术创新和产品优化，帮助企业在数字化转型的道路上走得更远。
@@ -79,7 +79,7 @@
           <div class="mb-16">
             <h2 class="text-4xl font-bold text-gray-900 dark:text-gray-100 mb-6">技术实力</h2>
             <p class="text-lg text-gray-700 dark:text-gray-300 leading-relaxed mb-6">
-              Knowledge Base 基于最新的技术栈构建，采用现代化的架构设计，确保系统的高性能、高可用和高扩展性。
+              Multikb Base 基于最新的技术栈构建，采用现代化的架构设计，确保系统的高性能、高可用和高扩展性。
             </p>
             <div class="grid md:grid-cols-3 gap-6">
               <div class="text-center p-6 rounded-xl bg-gray-50 dark:bg-gray-800">

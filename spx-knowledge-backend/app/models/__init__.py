@@ -32,3 +32,4 @@ from app.models.knowledge_graph import (  # noqa: F401
     KnowledgeGraphEntityDocument,
     KnowledgeGraphExtractionTask,
 )
+from app.models.entity_type import EntityType, KnowledgeBaseEntityType  # noqa: F401

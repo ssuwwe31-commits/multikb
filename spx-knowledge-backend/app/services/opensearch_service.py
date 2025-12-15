@@ -1636,8 +1636,9 @@ class OpenSearchService:
             }
             
             # 添加高亮配置（如果有查询文本）
-            if query_text:
-                highlight_config = self._build_highlight_config(query_text, fields=["content"])
+            query_text_for_highlight = query or exact_phrase or bool_query
+            if query_text_for_highlight:
+                highlight_config = self._build_highlight_config(query_text_for_highlight, fields=["content"])
                 search_body.update(highlight_config)
             
             response = self.client.search(
@@ -1658,7 +1659,7 @@ class OpenSearchService:
                         metadata = {}
                     
                     # 提取高亮内容
-                    highlighted_content = self._extract_highlight(hit, "content") if query_text else None
+                    highlighted_content = self._extract_highlight(hit, "content") if query_text_for_highlight else None
                     
                     results.append({
                         "document_id": hit["_source"].get("document_id"),

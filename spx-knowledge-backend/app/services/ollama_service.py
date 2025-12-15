@@ -22,7 +22,8 @@ class OllamaService:
         self, 
         prompt: str, 
         model: str = settings.OLLAMA_MODEL,
-        format: Optional[str] = None
+        format: Optional[str] = None,
+        timeout: Optional[int] = None
     ) -> str:
         """生成文本
         
@@ -30,8 +31,14 @@ class OllamaService:
             prompt: 提示词
             model: 模型名称
             format: 输出格式，如 "json" 用于强制 JSON 输出（Ollama 支持）
+            timeout: 超时时间（秒），默认使用 OLLAMA_TIMEOUT 配置
         """
+        request_timeout = timeout or getattr(settings, 'OLLAMA_TIMEOUT', 300)
+        prompt_length = len(prompt)
+        
         try:
+            logger.info(f"开始调用Ollama生成文本: 模型={model}, 提示词长度={prompt_length} 字符, 超时={request_timeout}秒, format={format}")
+            
             request_data = {
                 "model": model,
                 "prompt": prompt,
@@ -43,14 +50,24 @@ class OllamaService:
             
             response = requests.post(
                 f"{self.base_url}/api/generate",
-                json=request_data
+                json=request_data,
+                timeout=request_timeout
             )
             response.raise_for_status()
             result = response.json()
-            return result.get("response", "")
+            response_text = result.get("response", "")
+            response_length = len(response_text)
+            logger.info(f"Ollama文本生成完成: 响应长度={response_length} 字符")
+            return response_text
+        except requests.exceptions.Timeout as e:
+            logger.error(f"Ollama文本生成超时: 模型={model}, 超时时间={request_timeout}秒, 提示词长度={prompt_length} 字符")
+            raise Exception(f"Ollama请求超时（{request_timeout}秒）")
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Ollama文本生成请求错误: {e}, 模型={model}, 提示词长度={prompt_length} 字符")
+            raise Exception(f"Ollama请求失败: {str(e)}")
         except Exception as e:
-            print(f"Ollama文本生成错误: {e}")
-            return ""
+            logger.error(f"Ollama文本生成错误: {e}, 模型={model}, 提示词长度={prompt_length} 字符", exc_info=True)
+            raise Exception(f"Ollama文本生成失败: {str(e)}")
     
     async def generate_embedding(
         self, 
@@ -125,6 +142,8 @@ class OllamaService:
             "stream": False,
         }
         last_error: Optional[str] = None
+        is_timeout_error = False
+        
         for attempt in range(max_retries + 1):
             try:
                 logger.debug(f"OCR 尝试 {attempt + 1}/{max_retries + 1}: 模型={target_model}, 图片大小={len(image_bytes)} bytes")
@@ -138,8 +157,20 @@ class OllamaService:
                 content = result.get("response", "")
                 logger.debug(f"OCR 成功: 返回内容长度={len(content)}")
                 return (content or "").strip()
+            except requests.exceptions.Timeout as e:
+                # 超时错误：使用更长的重试间隔
+                is_timeout_error = True
+                last_error = f"请求超时: {str(e)}"
+                logger.warning(f"OCR 请求超时 (尝试 {attempt + 1}/{max_retries + 1}): {last_error}")
+                if attempt < max_retries:
+                    # 指数退避：超时错误使用更长的等待时间
+                    # 第1次重试：5秒，第2次重试：15秒
+                    wait_time = 5 * (2 ** attempt) if attempt > 0 else 5
+                    logger.info(f"等待 {wait_time} 秒后重试...")
+                    time.sleep(wait_time)
             except requests.exceptions.HTTPError as e:
                 # HTTP 错误，记录详细错误信息
+                is_timeout_error = False
                 error_detail = f"HTTP {e.response.status_code}"
                 try:
                     error_body = e.response.json()
@@ -149,17 +180,30 @@ class OllamaService:
                 last_error = f"{error_detail} (URL: {base_url}/api/generate)"
                 logger.warning(f"OCR HTTP 错误 (尝试 {attempt + 1}/{max_retries + 1}): {last_error}")
                 if attempt < max_retries:
-                    time.sleep(1)  # 短暂延迟后重试
+                    # 指数退避：1秒、2秒、4秒
+                    wait_time = 2 ** attempt
+                    logger.debug(f"等待 {wait_time} 秒后重试...")
+                    time.sleep(wait_time)
             except requests.exceptions.RequestException as e:
+                # 其他请求错误（包括连接错误等）
+                is_timeout_error = False
                 last_error = f"请求错误: {str(e)}"
                 logger.warning(f"OCR 请求错误 (尝试 {attempt + 1}/{max_retries + 1}): {last_error}")
                 if attempt < max_retries:
-                    time.sleep(1)
+                    # 指数退避：1秒、2秒、4秒
+                    wait_time = 2 ** attempt
+                    logger.debug(f"等待 {wait_time} 秒后重试...")
+                    time.sleep(wait_time)
             except Exception as exc:
+                # 未知错误
+                is_timeout_error = False
                 last_error = f"未知错误: {str(exc)}"
                 logger.warning(f"OCR 未知错误 (尝试 {attempt + 1}/{max_retries + 1}): {last_error}")
                 if attempt < max_retries:
-                    time.sleep(1)
+                    # 指数退避：1秒、2秒、4秒
+                    wait_time = 2 ** attempt
+                    logger.debug(f"等待 {wait_time} 秒后重试...")
+                    time.sleep(wait_time)
         
         # 所有重试都失败
         error_msg = f"OCR识别失败: {last_error}"

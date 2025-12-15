@@ -17,6 +17,9 @@ redis>=4.5.0
 # Search Engine
 opensearch-py>=2.0.0
 
+# Graph Database
+nebula3-python>=3.8.0
+
 # Object Storage
 minio>=7.1.0
 

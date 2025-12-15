@@ -38,7 +38,7 @@
             </div>
             
             <p class="text-gray-600 dark:text-gray-300 mb-6 leading-relaxed">
-              "Knowledge Base 帮助我们统一管理技术文档，研发团队可以快速查找API文档、技术规范和最佳实践。多模态检索功能让我们的技术文档搜索效率提升了80%。"
+              "Multikb Base 帮助我们统一管理技术文档，研发团队可以快速查找API文档、技术规范和最佳实践。多模态检索功能让我们的技术文档搜索效率提升了80%。"
             </p>
             
             <div class="flex items-center justify-between">
@@ -86,7 +86,7 @@
             </div>
             
             <p class="text-gray-600 mb-6 leading-relaxed">
-              "企业级安全是我们最看重的，Knowledge Base 的 ClamAV 病毒扫描功能完全满足我们的合规要求。知识库的版本管理功能让我们可以追踪所有文档变更，审计非常方便。"
+              "企业级安全是我们最看重的，Multikb Base 的 ClamAV 病毒扫描功能完全满足我们的合规要求。知识库的版本管理功能让我们可以追踪所有文档变更，审计非常方便。"
             </p>
             
             <div class="flex items-center justify-between">
@@ -134,7 +134,7 @@
             </div>
             
             <p class="text-gray-600 mb-6 leading-relaxed">
-              "我们使用 Knowledge Base 管理课程资料、研究论文和教学资源。9种文档格式支持让我们可以统一管理PDF课件、Word教案、Excel成绩表等。多模态检索让师生可以快速找到需要的资料。"
+              "我们使用 Multikb Base 管理课程资料、研究论文和教学资源。9种文档格式支持让我们可以统一管理PDF课件、Word教案、Excel成绩表等。多模态检索让师生可以快速找到需要的资料。"
             </p>
             
             <div class="flex items-center justify-between">
@@ -182,7 +182,7 @@
             </div>
             
             <p class="text-gray-600 mb-6 leading-relaxed">
-              "我们使用 Knowledge Base 管理产品手册、技术规范和操作指南。版本管理功能让我们可以追踪所有文档的变更历史，确保员工始终使用最新版本。图片搜索功能特别实用，可以通过产品图片快速找到相关文档。"
+              "我们使用 Multikb Base 管理产品手册、技术规范和操作指南。版本管理功能让我们可以追踪所有文档的变更历史，确保员工始终使用最新版本。图片搜索功能特别实用，可以通过产品图片快速找到相关文档。"
             </p>
             
             <div class="flex items-center justify-between">
@@ -230,7 +230,7 @@
             </div>
             
             <p class="text-gray-600 mb-6 leading-relaxed">
-              "Knowledge Base 帮助我们管理医疗指南、病例资料和培训文档。ClamAV 安全扫描确保所有上传的文档都是安全的，这对于医疗行业至关重要。多模态检索让医生可以通过文字或图片快速查找相关病例。"
+              "Multikb Base 帮助我们管理医疗指南、病例资料和培训文档。ClamAV 安全扫描确保所有上传的文档都是安全的，这对于医疗行业至关重要。多模态检索让医生可以通过文字或图片快速查找相关病例。"
             </p>
             
             <div class="flex items-center justify-between">
@@ -278,7 +278,7 @@
             </div>
             
             <p class="text-gray-600 mb-6 leading-relaxed">
-              "作为咨询公司，我们积累了大量的行业报告、案例研究和最佳实践。Knowledge Base 的知识图谱功能帮助我们建立知识之间的关联，让顾问可以快速发现相关的案例和洞察。"
+              "作为咨询公司，我们积累了大量的行业报告、案例研究和最佳实践。Multikb Base 的知识图谱功能帮助我们建立知识之间的关联，让顾问可以快速发现相关的案例和洞察。"
             </p>
             
             <div class="flex items-center justify-between">
@@ -360,7 +360,7 @@
           加入我们的成功案例
         </h2>
         <p class="text-xl text-blue-100 mb-8">
-          让 Knowledge Base 帮助您的团队提升协作效率
+          让 Multikb Base 帮助您的团队提升协作效率
         </p>
         <div class="flex flex-col sm:flex-row gap-4 justify-center">
           <button class="px-8 py-4 bg-white text-blue-600 rounded-xl font-semibold hover:bg-gray-50 transition-all duration-300 hover:shadow-lg">

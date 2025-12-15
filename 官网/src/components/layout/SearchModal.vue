@@ -110,7 +110,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 
 const props = defineProps<{
@@ -131,7 +131,7 @@ const searchInput = ref<HTMLInputElement | null>(null)
 // Search data
 const searchData = [
   // Pages
-  { title: '首页', path: '/', category: '页面', description: 'Knowledge Base 主页', icon: 'HomeIcon' },
+  { title: '首页', path: '/', category: '页面', description: 'Multikb Base 主页', icon: 'HomeIcon' },
   { title: '功能特性', path: '/features', category: '页面', description: '查看完整功能列表', icon: 'FeatureIcon' },
   { title: '文档', path: '/docs', category: '页面', description: '完整的使用文档', icon: 'DocsIcon' },
   { title: '定价', path: '/pricing', category: '页面', description: '查看定价方案', icon: 'PricingIcon' },
@@ -141,7 +141,7 @@ const searchData = [
   { title: '更新日志', path: '/changelog', category: '页面', description: '查看版本更新历史', icon: 'ChangelogIcon' },
   
   // Documentation
-  { title: '5分钟快速开始', path: '/docs/quick-start', category: '文档', description: '快速上手 Knowledge Base', icon: 'DocsIcon' },
+  { title: '5分钟快速开始', path: '/docs/quick-start', category: '文档', description: '快速上手 Multikb Base', icon: 'DocsIcon' },
   { title: '核心概念', path: '/docs/core-concepts', category: '文档', description: '了解核心概念和术语', icon: 'DocsIcon' },
   { title: '系统要求', path: '/docs/system-requirements', category: '文档', description: '查看系统配置要求', icon: 'DocsIcon' },
   { title: 'Docker部署', path: '/docs/docker-deployment', category: '文档', description: '使用Docker快速部署', icon: 'DocsIcon' },

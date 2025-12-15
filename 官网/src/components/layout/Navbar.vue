@@ -13,7 +13,7 @@
             </svg>
           </div>
           <span class="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-            Knowledge Base
+            Multikb Base
           </span>
         </router-link>
 
@@ -93,7 +93,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import SearchModal from './SearchModal.vue'
 

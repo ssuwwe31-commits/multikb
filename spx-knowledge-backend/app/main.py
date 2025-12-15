@@ -1,4 +1,4 @@
-﻿"""
+"""
 FastAPI Application Entry Point
 """
 
@@ -84,6 +84,13 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 服务器启动完成")
     yield
     logger.info("👋 服务器关闭")
+    
+    # 关闭NebulaGraph连接池
+    try:
+        from app.services.graph_storage_service import close_global_graph_storage
+        close_global_graph_storage()
+    except Exception as e:
+        logger.debug(f"关闭NebulaGraph连接池时出错（可忽略）: {e}")
 
 
 app = FastAPI(

@@ -93,10 +93,6 @@
 </template>
 
 <script setup lang="ts">
-import { useRouter } from 'vue-router'
-
-const router = useRouter()
-
 const openSourceFeatures = [
   '9种文档格式支持',
   '多模态问答',

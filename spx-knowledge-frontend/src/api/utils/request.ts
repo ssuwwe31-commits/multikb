@@ -1,4 +1,4 @@
-﻿import axios from 'axios'
+import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/modules/app'
 import { API_BASE_URL } from '@/config/api'
@@ -56,7 +56,15 @@ service.interceptors.response.use(
         return Promise.reject(new Error(res.message || 'Error'))
       }
     }
-    // 如果没有 code 字段，直接返回响应（兼容直接返回数据的格式）
+    // 兼容 success 字段的响应格式（后端使用 SuccessResponse）
+    if (res && typeof res === 'object' && 'success' in res && !('code' in res)) {
+      if (res.success === false) {
+        ElMessage.error(res.message || 'Error')
+        return Promise.reject(new Error(res.message || 'Error'))
+      }
+      // success 为 true 时，正常返回响应
+    }
+    // 如果没有 code 或 success 字段，直接返回响应（兼容直接返回数据的格式）
     return res
   },
   async (error) => {

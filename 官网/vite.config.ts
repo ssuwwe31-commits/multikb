@@ -16,7 +16,7 @@ export default defineConfig({
       output: {
         manualChunks: {
           'vue-vendor': ['vue', 'vue-router'],
-          'vueuse': ['@vueuse/core', '@vueuse/motion']
+          'vueuse': ['@vueuse/core']
         }
       }
     }

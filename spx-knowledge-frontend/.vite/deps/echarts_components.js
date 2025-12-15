@@ -30,22 +30,49 @@ import {
   sliderMove,
   stopPreviousKeyframeAnimationAndRestore,
   updateLeaveTo
-} from "./chunk-4Y7ELIB5.js";
+} from "./chunk-PDSZGEH7.js";
 import {
   AxisModelCommonMixin,
   Axis_default,
+  Component_default as Component_default2,
+  Interval_default,
+  Ordinal_default,
+  SeriesData_default,
+  Time_default,
+  clear,
+  contain,
+  createOrUpdate,
+  createOrUpdatePatternFromDecal,
+  createScaleByModel,
+  createSymbol,
+  ensureScaleRawExtentInfo,
+  findEventDispatcher,
+  getAxisRawValue,
+  getDataDimensionsOnAxis,
+  getItemVisualFromData,
+  getStackedDimension,
+  getVisualFromData,
+  isDimensionStacked,
+  niceScaleExtent,
+  normalizeSymbolOffset,
+  normalizeSymbolSize,
+  registerAction,
+  registerInternalOptionCreator,
+  setItemVisualFromData,
+  symbolBuildProxies,
+  unionAxisExtentFromData,
+  use
+} from "./chunk-TIKIBNSH.js";
+import {
   Circle_default,
   Component_default,
-  Component_default2,
   DataDiffer_default,
   DataFormatMixin,
-  Interval_default,
   LOCATION_PARAMS,
   Line_default,
   LinearGradient_default,
   MULTIPLE_REFERRING,
   Model_default,
-  Ordinal_default,
   Polygon_default,
   Polyline_default,
   Ring_default,
@@ -54,47 +81,34 @@ import {
   SOURCE_FORMAT_ARRAY_ROWS,
   SOURCE_FORMAT_OBJECT_ROWS,
   Sector_default,
-  SeriesData_default,
   SortOrderComparator,
   SourceManager,
-  Time_default,
   TooltipMarkupStyleCreator,
   applyTransform,
   asc,
   box,
   buildTooltipMarkup,
-  clear,
   compressBatches,
-  contain,
   convertOptionIdName,
   convertToColorString,
   copyLayoutParams,
   createFilterComparator,
   createIcon,
-  createOrUpdate,
-  createOrUpdatePatternFromDecal,
-  createScaleByModel,
-  createSymbol,
   createTextStyle,
   createTooltipMarkup,
   defaultEmphasis,
   deprecateLog,
   disableTransformOptionMerge,
   enableHoverEmphasis,
-  ensureScaleRawExtentInfo,
   enterBlur,
   enterEmphasis,
-  findEventDispatcher,
   format,
   formatTpl,
   formatTplSimple,
-  getAxisRawValue,
-  getDataDimensionsOnAxis,
   getDataItemValue,
   getDecalFromPalette,
   getECData,
   getFont,
-  getItemVisualFromData,
   getLabelStatesModels,
   getLayoutParams,
   getLayoutRect,
@@ -104,15 +118,12 @@ import {
   getPrecision,
   getRawValueParser,
   getShapeClass,
-  getStackedDimension,
   getTooltipRenderMode,
   getTransform,
   getUID,
-  getVisualFromData,
   graphic_exports,
   groupTransition,
   inheritDefaultOption,
-  isDimensionStacked,
   isNameSpecified,
   leaveBlur,
   leaveEmphasis,
@@ -124,41 +135,37 @@ import {
   mappingToExists,
   mergeLayoutParam,
   mergePath,
-  niceScaleExtent,
   normalizeCssArray,
-  normalizeSymbolOffset,
-  normalizeSymbolSize,
   normalizeToArray,
   normalizeTooltipFormatResult,
   parseDataValue,
   parseDate,
   parseFinder,
-  parsePercent as parsePercent2,
+  parsePercent,
   positionElement,
   preParseFinder,
   queryDataIndex,
   queryReferringComponents,
   reformIntervals,
-  registerAction,
-  registerInternalOptionCreator,
   setAsHighDownDispatcher,
-  setItemVisualFromData,
   setLabelStyle,
   setStatesStylesFromModel,
   setTooltipConfig,
   sizeCalculable,
   subPixelOptimizeLine,
-  symbolBuildProxies,
   throwError,
   toCamelCase,
   toggleHoverEmphasis,
   transformDirection,
-  unionAxisExtentFromData,
   updateProps,
-  use,
   warn,
   windowOpen
-} from "./chunk-ECJLLQHQ.js";
+} from "./chunk-5A4CWV6Z.js";
+import {
+  addEventListener,
+  normalizeEvent,
+  stop
+} from "./chunk-57FDJHXZ.js";
 import {
   BoundingRect_default,
   Displayable_default,
@@ -168,11 +175,10 @@ import {
   Rect_default,
   Text_default,
   __extends,
-  addEventListener,
   assert,
   bind,
   clone,
-  create2 as create,
+  create,
   createHashMap,
   curry,
   defaults,
@@ -200,18 +206,16 @@ import {
   mixin,
   modifyAlpha,
   noop,
-  normalizeEvent,
   parse,
-  parsePercent,
+  parsePercent as parsePercent2,
   retrieve,
   retrieve2,
   rotate,
-  stop,
   stringify,
   transformLocalCoord,
   translate,
   trim
-} from "./chunk-6YJGUZXM.js";
+} from "./chunk-AVPOS2AD.js";
 import "./chunk-Q4XP6UTR.js";
 
 // node_modules/echarts/lib/component/axisPointer/BaseAxisPointer.js
@@ -1665,8 +1669,8 @@ function resizePolar(polar, polarModel, api) {
   var center = polarModel.get("center");
   var width = api.getWidth();
   var height = api.getHeight();
-  polar.cx = parsePercent2(center[0], width);
-  polar.cy = parsePercent2(center[1], height);
+  polar.cx = parsePercent(center[0], width);
+  polar.cy = parsePercent(center[1], height);
   var radiusAxis = polar.getRadiusAxis();
   var size = Math.min(width, height) / 2;
   var radius = polarModel.get("radius");
@@ -1675,7 +1679,7 @@ function resizePolar(polar, polarModel, api) {
   } else if (!isArray(radius)) {
     radius = [0, radius];
   }
-  var parsedRadius = [parsePercent2(radius[0], size), parsePercent2(radius[1], size)];
+  var parsedRadius = [parsePercent(radius[0], size), parsePercent(radius[1], size)];
   radiusAxis.inverse ? radiusAxis.setExtent(parsedRadius[1], parsedRadius[0]) : radiusAxis.setExtent(parsedRadius[0], parsedRadius[1]);
 }
 function updatePolarScale(ecModel, api) {
@@ -2311,8 +2315,8 @@ function calRadialBar(barSeries) {
       width: 0,
       maxWidth: 0
     };
-    var barWidth = parsePercent2(seriesModel.get("barWidth"), bandWidth);
-    var barMaxWidth = parsePercent2(seriesModel.get("barMaxWidth"), bandWidth);
+    var barWidth = parsePercent(seriesModel.get("barWidth"), bandWidth);
+    var barMaxWidth = parsePercent(seriesModel.get("barMaxWidth"), bandWidth);
     var barGap = seriesModel.get("barGap");
     var barCategoryGap = seriesModel.get("barCategoryGap");
     if (barWidth && !stacks[stackId].width) {
@@ -2329,8 +2333,8 @@ function calRadialBar(barSeries) {
     result[coordSysName] = {};
     var stacks = columnsOnAxis.stacks;
     var bandWidth = columnsOnAxis.bandWidth;
-    var categoryGap = parsePercent2(columnsOnAxis.categoryGap, bandWidth);
-    var barGapPercent = parsePercent2(columnsOnAxis.gap, 1);
+    var categoryGap = parsePercent(columnsOnAxis.categoryGap, bandWidth);
+    var barGapPercent = parsePercent(columnsOnAxis.gap, 1);
     var remainedWidth = columnsOnAxis.remainedWidth;
     var autoWidthCount = columnsOnAxis.autoWidthCount;
     var autoWidth = (remainedWidth - categoryGap) / (autoWidthCount + (autoWidthCount - 1) * barGapPercent);
@@ -3334,7 +3338,7 @@ var CalendarView = (
       }
       var start = coordSys.getNextNDay(rangeData.end.time, 7 - rangeData.lweek).time;
       var cellSize = [coordSys.getCellWidth(), coordSys.getCellHeight()];
-      margin = parsePercent2(margin, Math.min(cellSize[1], cellSize[0]));
+      margin = parsePercent(margin, Math.min(cellSize[1], cellSize[0]));
       if (pos === "start") {
         start = coordSys.getNextNDay(rangeData.start.time, -(7 + rangeData.fweek)).time;
         margin = -margin;
@@ -3949,8 +3953,8 @@ var GraphicComponentView = (
         var isParentRoot = parentEl === rootGroup;
         var elInner = inner5(el);
         var parentElInner = inner5(parentEl);
-        elInner.width = parsePercent2(elInner.option.width, isParentRoot ? apiWidth : parentElInner.width) || 0;
-        elInner.height = parsePercent2(elInner.option.height, isParentRoot ? apiHeight : parentElInner.height) || 0;
+        elInner.width = parsePercent(elInner.option.width, isParentRoot ? apiWidth : parentElInner.width) || 0;
+        elInner.height = parsePercent(elInner.option.height, isParentRoot ? apiHeight : parentElInner.height) || 0;
       }
       for (var i = elOptions.length - 1; i >= 0; i--) {
         var elOption = elOptions[i];
@@ -7365,8 +7369,8 @@ var TooltipView = (
         });
       }
       if (isArray(positionExpr)) {
-        x = parsePercent2(positionExpr[0], viewWidth);
-        y = parsePercent2(positionExpr[1], viewHeight);
+        x = parsePercent(positionExpr[0], viewWidth);
+        y = parsePercent(positionExpr[1], viewHeight);
       } else if (isObject(positionExpr)) {
         var boxLayoutPosition = positionExpr;
         boxLayoutPosition.width = contentSize[0];
@@ -9016,7 +9020,7 @@ var SliderTimelineView = (
         if (!position) {
           return;
         }
-        var iconSize = parsePercent(retrieve2(timelineModel.get(["controlStyle", iconName + "BtnSize"]), controlSize), controlSize);
+        var iconSize = parsePercent2(retrieve2(timelineModel.get(["controlStyle", iconName + "BtnSize"]), controlSize), controlSize);
         var rect = [0, -iconSize / 2, iconSize, iconSize];
         var btn = makeControlIcon(timelineModel, iconName + "Icon", rect, {
           x: position[0],
@@ -9711,8 +9715,8 @@ function updateMarkerLayout(mpData, seriesModel, api) {
   mpData.each(function(idx) {
     var itemModel = mpData.getItemModel(idx);
     var point;
-    var xPx = parsePercent2(itemModel.get("x"), api.getWidth());
-    var yPx = parsePercent2(itemModel.get("y"), api.getHeight());
+    var xPx = parsePercent(itemModel.get("x"), api.getWidth());
+    var yPx = parsePercent(itemModel.get("y"), api.getHeight());
     if (!isNaN(xPx) && !isNaN(yPx)) {
       point = [xPx, yPx];
     } else if (seriesModel.getMarkerPosition) {
@@ -9973,8 +9977,8 @@ function updateSingleMarkerEndLayout(data, idx, isFrom, seriesModel, api) {
   var coordSys = seriesModel.coordinateSystem;
   var itemModel = data.getItemModel(idx);
   var point;
-  var xPx = parsePercent2(itemModel.get("x"), api.getWidth());
-  var yPx = parsePercent2(itemModel.get("y"), api.getHeight());
+  var xPx = parsePercent(itemModel.get("x"), api.getWidth());
+  var yPx = parsePercent(itemModel.get("y"), api.getHeight());
   if (!isNaN(xPx) && !isNaN(yPx)) {
     point = [xPx, yPx];
   } else {
@@ -10273,8 +10277,8 @@ function getSingleMarkerEndPoint(data, idx, dims, seriesModel, api) {
   var coordSys = seriesModel.coordinateSystem;
   var itemModel = data.getItemModel(idx);
   var point;
-  var xPx = parsePercent2(itemModel.get(dims[0]), api.getWidth());
-  var yPx = parsePercent2(itemModel.get(dims[1]), api.getHeight());
+  var xPx = parsePercent(itemModel.get(dims[0]), api.getWidth());
+  var yPx = parsePercent(itemModel.get(dims[1]), api.getHeight());
   if (!isNaN(xPx) && !isNaN(yPx)) {
     point = [xPx, yPx];
   } else {
@@ -12420,7 +12424,7 @@ var SliderZoomView = (
         });
         var bRect = path.getBoundingRect();
         var handleSize = dataZoomModel.get("handleSize");
-        this._handleHeight = parsePercent2(handleSize, this._size[1]);
+        this._handleHeight = parsePercent(handleSize, this._size[1]);
         this._handleWidth = bRect.width / bRect.height * this._handleHeight;
         path.setStyle(dataZoomModel.getModel("handleStyle").getItemStyle());
         path.style.strokeNoScale = true;
@@ -12452,7 +12456,7 @@ var SliderZoomView = (
       }, this);
       var actualMoveZone = filler;
       if (brushSelect) {
-        var moveHandleHeight = parsePercent2(dataZoomModel.get("moveHandleSize"), size[1]);
+        var moveHandleHeight = parsePercent(dataZoomModel.get("moveHandleSize"), size[1]);
         var moveHandle_1 = displayables.moveHandle = new Rect_default({
           style: dataZoomModel.getModel("moveHandleStyle").getItemStyle(),
           silent: true,
@@ -13481,7 +13485,7 @@ var ContinuousView = (
     ContinuousView2.prototype._createHandle = function(visualMapModel, mainGroup, handleIndex, itemSize, textSize, orient) {
       var onDrift = bind(this._dragHandle, this, handleIndex, false);
       var onDragEnd = bind(this._dragHandle, this, handleIndex, true);
-      var handleSize = parsePercent(visualMapModel.get("handleSize"), itemSize[0]);
+      var handleSize = parsePercent2(visualMapModel.get("handleSize"), itemSize[0]);
       var handleThumb = createSymbol(visualMapModel.get("handleIcon"), -handleSize / 2, -handleSize / 2, handleSize, handleSize, null, true);
       var cursor = getCursor2(this._orient);
       handleThumb.attr({
@@ -13532,7 +13536,7 @@ var ContinuousView = (
       shapes.handleLabels[handleIndex] = handleLabel;
     };
     ContinuousView2.prototype._createIndicator = function(visualMapModel, mainGroup, itemSize, textSize, orient) {
-      var scale = parsePercent(visualMapModel.get("indicatorSize"), itemSize[0]);
+      var scale = parsePercent2(visualMapModel.get("indicatorSize"), itemSize[0]);
       var indicator = createSymbol(visualMapModel.get("indicatorIcon"), -scale / 2, -scale / 2, scale, scale, null, true);
       indicator.attr({
         cursor: "move",

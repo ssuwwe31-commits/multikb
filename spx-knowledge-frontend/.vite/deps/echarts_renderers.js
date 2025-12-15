@@ -1,4 +1,14 @@
 import {
+  brush,
+  brushSingle,
+  createCanvasPattern,
+  getCanvasGradient,
+  getElementSSRData,
+  getLineDash,
+  getSize,
+  requestAnimationFrame_default
+} from "./chunk-57FDJHXZ.js";
+import {
   BoundingRect_default,
   CompoundPath_default,
   DEFAULT_FONT,
@@ -14,11 +24,8 @@ import {
   __extends,
   adjustTextY,
   assert,
-  brush,
-  brushSingle,
   clone,
   copyTransform,
-  createCanvasPattern,
   createCubicEasingFunc,
   createOrUpdateImage,
   devicePixelRatio,
@@ -29,16 +36,12 @@ import {
   env_default,
   extend,
   filter,
-  getCanvasGradient,
-  getElementSSRData,
   getIdURL,
-  getLineDash,
   getLineHeight,
   getMatrixStr,
   getPathPrecision,
   getSRTTransformString,
   getShadowKey,
-  getSize,
   hasSeparateFont,
   hasShadow,
   indexOf,
@@ -64,10 +67,9 @@ import {
   normalizeColor,
   parseFontSize,
   platformApi,
-  requestAnimationFrame_default,
   retrieve2,
   round4
-} from "./chunk-6YJGUZXM.js";
+} from "./chunk-AVPOS2AD.js";
 import "./chunk-Q4XP6UTR.js";
 
 // node_modules/zrender/lib/svg/SVGPathRebuilder.js

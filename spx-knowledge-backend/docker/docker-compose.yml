@@ -1,8 +1,6 @@
-﻿"""
-Docker Compose for Development
-"""
+﻿# Docker Compose for Development
 
-version: '3.8'
+# version: '3.8'  # Docker Compose v2 不再需要 version 字段
 
 services:
   # FastAPI应用
@@ -21,7 +19,7 @@ services:
       - MINIO_ROOT_PASSWORD=minioadmin
       - OLLAMA_BASE_URL=http://ollama:11434
       - USE_NEBULA_GRAPH=true
-      - NEBULA_HOSTS=["nebula-graphd:9669"]
+      - NEBULA_HOSTS=nebula-graphd:9669
       - NEBULA_USER=root
       - NEBULA_PASSWORD=nebula
     volumes:
@@ -115,6 +113,7 @@ services:
       - USER=root
     ports:
       - "9559:9559"
+      - "19559:19559"
     volumes:
       - nebula_metad_data:/data/meta
       - nebula_metad_logs:/logs
@@ -124,13 +123,24 @@ services:
       - --ws_ip=nebula-metad
       - --port=9559
       - --ws_http_port=19559
-      - --ws_h2_port=19560
       - --data_path=/data/meta
       - --log_dir=/logs
       - --v=0
       - --minloglevel=0
     networks:
       - spx-network
+    # 暂时禁用健康检查，让容器先启动
+    # healthcheck:
+    #   test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/9559' || exit 1"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 120s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   nebula-storaged:
     image: vesoft/nebula-storaged:v3.8.0
@@ -150,7 +160,6 @@ services:
       - --ws_ip=nebula-storaged
       - --port=9779
       - --ws_http_port=19779
-      - --ws_h2_port=19780
       - --data_path=/data/storage
       - --log_dir=/logs
       - --v=0
@@ -159,6 +168,18 @@ services:
       - nebula-metad
     networks:
       - spx-network
+    # 暂时禁用健康检查，让容器先启动
+    # healthcheck:
+    #   test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/9779' || exit 1"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 120s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   nebula-graphd:
     image: vesoft/nebula-graphd:v3.8.0
@@ -177,7 +198,6 @@ services:
       - --ws_ip=nebula-graphd
       - --port=9669
       - --ws_http_port=19669
-      - --ws_h2_port=19670
       - --log_dir=/logs
       - --v=0
       - --minloglevel=0
@@ -186,6 +206,18 @@ services:
       - nebula-storaged
     networks:
       - spx-network
+    # 暂时禁用健康检查，让容器先启动
+    # healthcheck:
+    #   test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/9669' || exit 1"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 120s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # Celery Worker
   celery-worker:
@@ -202,7 +234,7 @@ services:
       - MINIO_ROOT_PASSWORD=minioadmin
       - OLLAMA_BASE_URL=http://ollama:11434
       - USE_NEBULA_GRAPH=true
-      - NEBULA_HOSTS=["nebula-graphd:9669"]
+      - NEBULA_HOSTS=nebula-graphd:9669
       - NEBULA_USER=root
       - NEBULA_PASSWORD=nebula
     volumes:

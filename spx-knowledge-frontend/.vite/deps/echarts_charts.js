@@ -1,11 +1,13 @@
 import {
   createSeriesData_default,
+  prepareSeriesDataSchema
+} from "./chunk-H2IDPUMC.js";
+import {
   getLabelLineStatesModels,
   limitSurfaceAngle,
   limitTurnAngle,
-  prepareSeriesDataSchema,
   setLabelLineStyle
-} from "./chunk-LEWAB2AR.js";
+} from "./chunk-T5AMOG7A.js";
 import {
   LineDraw_default,
   Line_default as Line_default2,
@@ -35,12 +37,29 @@ import {
   updateViewOnPan,
   updateViewOnZoom,
   warnDeprecated
-} from "./chunk-4Y7ELIB5.js";
+} from "./chunk-PDSZGEH7.js";
+import {
+  Chart_default,
+  CoordinateSystem_default,
+  SeriesData_default,
+  createFloat32Array,
+  createLegacyDataSelectAction,
+  createOrUpdatePatternFromDecal,
+  createProgressiveLayout,
+  createRenderPlanner,
+  createSymbol,
+  getDimensionTypeByAxis,
+  getLayoutOnAxis,
+  isDimensionStacked,
+  layout,
+  normalizeSymbolOffset,
+  normalizeSymbolSize,
+  throttle,
+  use
+} from "./chunk-TIKIBNSH.js";
 import {
   BezierCurve_default,
-  Chart_default,
   Circle_default,
-  CoordinateSystem_default,
   DISPLAY_STATES,
   DataDiffer_default,
   HOVER_STATE_BLUR,
@@ -54,19 +73,12 @@ import {
   SOURCE_FORMAT_ARRAY_ROWS,
   SPECIAL_STATES,
   Sector_default,
-  SeriesData_default,
   Series_default,
   Z2_EMPHASIS_LIFT,
   animateLabelValue,
   asc,
   convertOptionIdName,
   convertToColorString,
-  createFloat32Array,
-  createLegacyDataSelectAction,
-  createOrUpdatePatternFromDecal,
-  createProgressiveLayout,
-  createRenderPlanner,
-  createSymbol,
   createTextConfig,
   createTextStyle,
   createTooltipMarkup,
@@ -78,11 +90,9 @@ import {
   error,
   getAvailableSize,
   getDecalFromPalette,
-  getDimensionTypeByAxis,
   getECData,
   getFont,
   getLabelStatesModels,
-  getLayoutOnAxis,
   getLayoutRect,
   getPercentSeats,
   getShapeClass,
@@ -91,12 +101,10 @@ import {
   inheritDefaultOption,
   initProps,
   interpolateRawValues,
-  isDimensionStacked,
   isHighDownDispatcher,
   isNumeric,
   isRadianAroundZero,
   labelInner,
-  layout,
   leaveEmphasis,
   linearMap,
   makeInner,
@@ -105,11 +113,9 @@ import {
   makeSeriesEncodeForAxisCoordSys,
   makeSeriesEncodeForNameBased,
   makeStyleMapper,
-  normalizeSymbolOffset,
-  normalizeSymbolSize,
   normalizeToArray,
   numericToNumber,
-  parsePercent as parsePercent2,
+  parsePercent,
   positionElement,
   quantile,
   queryDataIndex,
@@ -127,15 +133,14 @@ import {
   setStatesStylesFromModel,
   shiftLayoutOnY,
   subPixelOptimize,
-  throttle,
   throwError,
   toggleHoverEmphasis,
   traverseElements,
   updateProps,
-  use,
   warn,
   windowOpen
-} from "./chunk-ECJLLQHQ.js";
+} from "./chunk-5A4CWV6Z.js";
+import "./chunk-57FDJHXZ.js";
 import {
   BoundingRect_default,
   Displayable_default,
@@ -156,7 +161,7 @@ import {
   concatArray,
   containStroke,
   containStroke2,
-  copy,
+  copy2 as copy,
   create,
   create2,
   createHashMap,
@@ -194,7 +199,7 @@ import {
   normalizeArcAngles,
   normalizeCssArray,
   normalizeRadian,
-  parsePercent,
+  parsePercent as parsePercent2,
   platformApi,
   quadraticAt,
   quadraticDerivativeAt,
@@ -208,7 +213,7 @@ import {
   set,
   sub,
   translate
-} from "./chunk-6YJGUZXM.js";
+} from "./chunk-AVPOS2AD.js";
 import "./chunk-Q4XP6UTR.js";
 
 // node_modules/echarts/lib/chart/line/LineSeries.js
@@ -2397,7 +2402,7 @@ function getSectorCornerRadius(model, shape, zeroIfNull) {
   var dr = Math.abs(shape.r || 0 - shape.r0 || 0);
   return {
     cornerRadius: map(cornerRadius, function(cr) {
-      return parsePercent(cr, dr);
+      return parsePercent2(cr, dr);
     })
   };
 }
@@ -3218,11 +3223,11 @@ function getBasicPieLayout(seriesModel, api) {
   if (!isArray(radius)) {
     radius = [0, radius];
   }
-  var width = parsePercent2(viewRect.width, api.getWidth());
-  var height = parsePercent2(viewRect.height, api.getHeight());
+  var width = parsePercent(viewRect.width, api.getWidth());
+  var height = parsePercent(viewRect.height, api.getHeight());
   var size = Math.min(width, height);
-  var r0 = parsePercent2(radius[0], size / 2);
-  var r = parsePercent2(radius[1], size / 2);
+  var r0 = parsePercent(radius[0], size / 2);
+  var r = parsePercent(radius[1], size / 2);
   var cx;
   var cy;
   var coordSys = seriesModel.coordinateSystem;
@@ -3234,8 +3239,8 @@ function getBasicPieLayout(seriesModel, api) {
     if (!isArray(center2)) {
       center2 = [center2, center2];
     }
-    cx = parsePercent2(center2[0], width) + viewRect.x;
-    cy = parsePercent2(center2[1], height) + viewRect.y;
+    cx = parsePercent(center2[0], width) + viewRect.x;
+    cy = parsePercent(center2[1], height) + viewRect.y;
   }
   return {
     cx,
@@ -3627,13 +3632,13 @@ function pieLabelLayout(seriesModel) {
     var labelPosition = labelModel.get("position") || itemModel.get(["emphasis", "label", "position"]);
     var labelDistance = labelModel.get("distanceToLabelLine");
     var labelAlignTo = labelModel.get("alignTo");
-    var edgeDistance = parsePercent2(labelModel.get("edgeDistance"), viewWidth);
+    var edgeDistance = parsePercent(labelModel.get("edgeDistance"), viewWidth);
     var bleedMargin = labelModel.get("bleedMargin");
     var labelLineModel = itemModel.getModel("labelLine");
     var labelLineLen = labelLineModel.get("length");
-    labelLineLen = parsePercent2(labelLineLen, viewWidth);
+    labelLineLen = parsePercent(labelLineLen, viewWidth);
     var labelLineLen2 = labelLineModel.get("length2");
-    labelLineLen2 = parsePercent2(labelLineLen2, viewWidth);
+    labelLineLen2 = parsePercent(labelLineLen2, viewWidth);
     if (Math.abs(sectorShape.endAngle - sectorShape.startAngle) < minShowLabelRadian) {
       each(label2.states, setNotShow);
       label2.ignore = true;
@@ -5577,7 +5582,7 @@ var TreePath = (
       var orient = shape.orient;
       var forkDim = orient === "TB" || orient === "BT" ? 0 : 1;
       var otherDim = 1 - forkDim;
-      var forkPosition = parsePercent2(shape.forkPosition, 1);
+      var forkPosition = parsePercent(shape.forkPosition, 1);
       var tmpPoint = [];
       tmpPoint[forkDim] = parentPoint[forkDim];
       tmpPoint[otherDim] = parentPoint[otherDim] + (lastChildPos[otherDim] - parentPoint[otherDim]) * forkPosition;
@@ -7588,9 +7593,9 @@ var TreemapView = (
         var layoutInfo = this.seriesModel.layoutInfo;
         mouseX -= layoutInfo.x;
         mouseY -= layoutInfo.y;
-        var m = create2();
+        var m = create();
         translate(m, m, [-mouseX, -mouseY]);
-        scale2(m, m, [zoomScale, zoomScale]);
+        scale(m, m, [zoomScale, zoomScale]);
         translate(m, m, [mouseX, mouseY]);
         rect.applyTransform(m);
         this.api.dispatchAction({
@@ -8129,8 +8134,8 @@ var treemapLayout_default = {
       height: api.getHeight()
     });
     var size = seriesOption.size || [];
-    var containerWidth = parsePercent2(retrieveValue(layoutInfo.width, size[0]), ecWidth);
-    var containerHeight = parsePercent2(retrieveValue(layoutInfo.height, size[1]), ecHeight);
+    var containerWidth = parsePercent(retrieveValue(layoutInfo.width, size[0]), ecWidth);
+    var containerHeight = parsePercent(retrieveValue(layoutInfo.height, size[1]), ecHeight);
     var payloadType = payload && payload.type;
     var types = ["treemapZoomToNode", "treemapRootToNode"];
     var targetInfo = retrieveTargetInfo(payload, types, seriesModel);
@@ -8727,8 +8732,8 @@ function simpleLayout(seriesModel) {
 function simpleLayoutEdge(graph, seriesModel) {
   graph.eachEdge(function(edge, index) {
     var curveness = retrieve3(edge.getModel().get(["lineStyle", "curveness"]), -getCurvenessForEdge(edge, seriesModel, index, true), 0);
-    var p1 = clone2(edge.node1.getLayout());
-    var p2 = clone2(edge.node2.getLayout());
+    var p1 = clone3(edge.node1.getLayout());
+    var p2 = clone3(edge.node2.getLayout());
     var points = [p1, p2];
     if (+curveness) {
       points.push([(p1[0] + p2[0]) / 2 - (p1[1] - p2[1]) * curveness, (p1[1] + p2[1]) / 2 - (p2[0] - p1[0]) * curveness]);
@@ -8817,7 +8822,7 @@ function circularLayout(seriesModel, basedOn, draggingNode, pointer) {
     var _a = coordSys.pointToData(pointer), tempX = _a[0], tempY = _a[1];
     var v = [tempX - cx, tempY - cy];
     normalize(v, v);
-    scale(v, v, r);
+    scale2(v, v, r);
     draggingNode.setLayout([cx + v[0], cy + v[1]], true);
     var circularRotateLabel = seriesModel.get(["circular", "rotateLabel"]);
     rotateNodeLabel(draggingNode, circularRotateLabel, cx, cy);
@@ -8825,8 +8830,8 @@ function circularLayout(seriesModel, basedOn, draggingNode, pointer) {
   _layoutNodesBasedOn[basedOn](seriesModel, graph, nodeData, r, cx, cy, count);
   graph.eachEdge(function(edge, index) {
     var curveness = retrieve3(edge.getModel().get(["lineStyle", "curveness"]), getCurvenessForEdge(edge, seriesModel, index), 0);
-    var p1 = clone2(edge.node1.getLayout());
-    var p2 = clone2(edge.node2.getLayout());
+    var p1 = clone3(edge.node1.getLayout());
+    var p2 = clone3(edge.node2.getLayout());
     var cp1;
     var x12 = (p1[0] + p2[0]) / 2;
     var y12 = (p1[1] + p2[1]) / 2;
@@ -8931,9 +8936,9 @@ function forceLayout(inNodes, inEdges, opts) {
   for (var i = 0; i < nodes.length; i++) {
     var n = nodes[i];
     if (!n.p) {
-      n.p = create(width * (Math.random() - 0.5) + center2[0], height * (Math.random() - 0.5) + center2[1]);
+      n.p = create2(width * (Math.random() - 0.5) + center2[0], height * (Math.random() - 0.5) + center2[1]);
     }
-    n.pp = clone2(n.p);
+    n.pp = clone3(n.p);
     n.edges = null;
   }
   var initialFriction = opts.friction == null ? 0.6 : opts.friction;
@@ -9251,9 +9256,9 @@ function adjustEdge(graph, scale3) {
     var fromSymbol = edge.getVisual("fromSymbol");
     var toSymbol = edge.getVisual("toSymbol");
     if (!linePoints.__original) {
-      linePoints.__original = [clone2(linePoints[0]), clone2(linePoints[1])];
+      linePoints.__original = [clone3(linePoints[0]), clone3(linePoints[1])];
       if (linePoints[2]) {
-        linePoints.__original.push(clone2(linePoints[2]));
+        linePoints.__original.push(clone3(linePoints[2]));
       }
     }
     var originalPoints = linePoints.__original;
@@ -10247,9 +10252,9 @@ function parsePosition(seriesModel, api) {
   var width = api.getWidth();
   var height = api.getHeight();
   var size = Math.min(width, height);
-  var cx = parsePercent2(center2[0], api.getWidth());
-  var cy = parsePercent2(center2[1], api.getHeight());
-  var r = parsePercent2(seriesModel.get("radius"), size / 2);
+  var cx = parsePercent(center2[0], api.getWidth());
+  var cy = parsePercent(center2[1], api.getHeight());
+  var r = parsePercent(seriesModel.get("radius"), size / 2);
   return {
     cx,
     cy,
@@ -10362,8 +10367,8 @@ var GaugeView = (
       var labelModel = seriesModel.getModel("axisLabel");
       var splitNumber = seriesModel.get("splitNumber");
       var subSplitNumber = tickModel.get("splitNumber");
-      var splitLineLen = parsePercent2(splitLineModel.get("length"), r);
-      var tickLen = parsePercent2(tickModel.get("length"), r);
+      var splitLineLen = parsePercent(splitLineModel.get("length"), r);
+      var tickLen = parsePercent(tickModel.get("length"), r);
       var angle = startAngle;
       var step = (endAngle - startAngle) / splitNumber;
       var subStep = step / subSplitNumber;
@@ -10490,12 +10495,12 @@ var GaugeView = (
       function createPointer(idx, angle) {
         var itemModel = data.getItemModel(idx);
         var pointerModel = itemModel.getModel("pointer");
-        var pointerWidth = parsePercent2(pointerModel.get("width"), posInfo.r);
-        var pointerLength = parsePercent2(pointerModel.get("length"), posInfo.r);
+        var pointerWidth = parsePercent(pointerModel.get("width"), posInfo.r);
+        var pointerLength = parsePercent(pointerModel.get("length"), posInfo.r);
         var pointerStr = seriesModel.get(["pointer", "icon"]);
         var pointerOffset = pointerModel.get("offsetCenter");
-        var pointerOffsetX = parsePercent2(pointerOffset[0], posInfo.r);
-        var pointerOffsetY = parsePercent2(pointerOffset[1], posInfo.r);
+        var pointerOffsetX = parsePercent(pointerOffset[0], posInfo.r);
+        var pointerOffsetY = parsePercent(pointerOffset[1], posInfo.r);
         var pointerKeepAspect = pointerModel.get("keepAspect");
         var pointer;
         if (pointerStr) {
@@ -10639,7 +10644,7 @@ var GaugeView = (
         var anchorType = anchorModel.get("icon");
         var offsetCenter = anchorModel.get("offsetCenter");
         var anchorKeepAspect = anchorModel.get("keepAspect");
-        var anchor = createSymbol(anchorType, posInfo.cx - anchorSize / 2 + parsePercent2(offsetCenter[0], posInfo.r), posInfo.cy - anchorSize / 2 + parsePercent2(offsetCenter[1], posInfo.r), anchorSize, anchorSize, null, anchorKeepAspect);
+        var anchor = createSymbol(anchorType, posInfo.cx - anchorSize / 2 + parsePercent(offsetCenter[0], posInfo.r), posInfo.cy - anchorSize / 2 + parsePercent(offsetCenter[1], posInfo.r), anchorSize, anchorSize, null, anchorKeepAspect);
         anchor.z2 = anchorModel.get("showAbove") ? 1 : 0;
         anchor.setStyle(anchorModel.getModel("itemStyle").getItemStyle());
         this.group.add(anchor);
@@ -10675,8 +10680,8 @@ var GaugeView = (
         var itemTitleModel = itemModel.getModel("title");
         if (itemTitleModel.get("show")) {
           var titleOffsetCenter = itemTitleModel.get("offsetCenter");
-          var titleX = posInfo.cx + parsePercent2(titleOffsetCenter[0], posInfo.r);
-          var titleY = posInfo.cy + parsePercent2(titleOffsetCenter[1], posInfo.r);
+          var titleX = posInfo.cx + parsePercent(titleOffsetCenter[0], posInfo.r);
+          var titleY = posInfo.cy + parsePercent(titleOffsetCenter[1], posInfo.r);
           var labelEl = newTitleEls[idx];
           labelEl.attr({
             z2: showPointerAbove ? 0 : 2,
@@ -10695,10 +10700,10 @@ var GaugeView = (
         var itemDetailModel = itemModel.getModel("detail");
         if (itemDetailModel.get("show")) {
           var detailOffsetCenter = itemDetailModel.get("offsetCenter");
-          var detailX = posInfo.cx + parsePercent2(detailOffsetCenter[0], posInfo.r);
-          var detailY = posInfo.cy + parsePercent2(detailOffsetCenter[1], posInfo.r);
-          var width = parsePercent2(itemDetailModel.get("width"), posInfo.r);
-          var height = parsePercent2(itemDetailModel.get("height"), posInfo.r);
+          var detailX = posInfo.cx + parsePercent(detailOffsetCenter[0], posInfo.r);
+          var detailY = posInfo.cy + parsePercent(detailOffsetCenter[1], posInfo.r);
+          var width = parsePercent(itemDetailModel.get("width"), posInfo.r);
+          var height = parsePercent(itemDetailModel.get("height"), posInfo.r);
           var detailColor = seriesModel.get(["progress", "show"]) ? data.getItemVisual(idx, "style").fill : autoColor;
           var labelEl = newDetailEls[idx];
           var formatter_1 = itemDetailModel.get("formatter");
@@ -11325,7 +11330,7 @@ function funnelLayout(ecModel, api) {
     var indices = getSortedIndices(data, sort3);
     var x = viewRect.x;
     var y = viewRect.y;
-    var sizeExtent = orient === "horizontal" ? [parsePercent2(seriesModel.get("minSize"), viewHeight), parsePercent2(seriesModel.get("maxSize"), viewHeight)] : [parsePercent2(seriesModel.get("minSize"), viewWidth), parsePercent2(seriesModel.get("maxSize"), viewWidth)];
+    var sizeExtent = orient === "horizontal" ? [parsePercent(seriesModel.get("minSize"), viewHeight), parsePercent(seriesModel.get("maxSize"), viewHeight)] : [parsePercent(seriesModel.get("minSize"), viewWidth), parsePercent(seriesModel.get("maxSize"), viewWidth)];
     var dataExtent = data.getDataExtent(valueDim);
     var min = seriesModel.get("min");
     var max = seriesModel.get("max");
@@ -11392,7 +11397,7 @@ function funnelLayout(ecModel, api) {
         if (width == null) {
           width = itemSize;
         } else {
-          width = parsePercent2(width, viewWidth);
+          width = parsePercent(width, viewWidth);
           if (sort3 === "ascending") {
             width = -width;
           }
@@ -11408,7 +11413,7 @@ function funnelLayout(ecModel, api) {
         if (height == null) {
           height = itemSize;
         } else {
-          height = parsePercent2(height, viewHeight);
+          height = parsePercent(height, viewHeight);
           if (sort3 === "ascending") {
             height = -height;
           }
@@ -12910,7 +12915,7 @@ function calculateBase(groupItem) {
     if (!isArray(boxWidthBound)) {
       boxWidthBound = [boxWidthBound, boxWidthBound];
     }
-    boundList.push([parsePercent2(boxWidthBound[0], bandWidth) || 0, parsePercent2(boxWidthBound[1], bandWidth) || 0]);
+    boundList.push([parsePercent(boxWidthBound[0], bandWidth) || 0, parsePercent(boxWidthBound[1], bandWidth) || 0]);
   });
   var availableWidth = bandWidth * 0.8 - 2;
   var boxGap = availableWidth / seriesCount * 0.3;
@@ -13604,10 +13609,10 @@ function calculateCandleWidth(seriesModel, data) {
   var baseAxis = seriesModel.getBaseAxis();
   var extent;
   var bandWidth = baseAxis.type === "category" ? baseAxis.getBandWidth() : (extent = baseAxis.getExtent(), Math.abs(extent[1] - extent[0]) / data.count());
-  var barMaxWidth = parsePercent2(retrieve2(seriesModel.get("barMaxWidth"), bandWidth), bandWidth);
-  var barMinWidth = parsePercent2(retrieve2(seriesModel.get("barMinWidth"), 1), bandWidth);
+  var barMaxWidth = parsePercent(retrieve2(seriesModel.get("barMaxWidth"), bandWidth), bandWidth);
+  var barMinWidth = parsePercent(retrieve2(seriesModel.get("barMinWidth"), 1), bandWidth);
   var barWidth = seriesModel.get("barWidth");
-  return barWidth != null ? parsePercent2(barWidth, bandWidth) : Math.max(Math.min(bandWidth / 2, barMaxWidth), barMinWidth);
+  return barWidth != null ? parsePercent(barWidth, bandWidth) : Math.max(Math.min(bandWidth / 2, barMaxWidth), barMinWidth);
 }
 var candlestickLayout_default = candlestickLayout;
 
@@ -13809,7 +13814,7 @@ var EffectScatterView = (
     EffectScatterView2.prototype._updateGroupTransform = function(seriesModel) {
       var coordSys = seriesModel.coordinateSystem;
       if (coordSys && coordSys.getRoamTransform) {
-        this.group.transform = clone3(coordSys.getRoamTransform());
+        this.group.transform = clone2(coordSys.getRoamTransform());
         this.group.decomposeTransform();
       }
     };
@@ -15502,8 +15507,8 @@ function prepareSymbolSize(data, dataIndex, layout2, symbolRepeat, symbolClip, b
       parsedSymbolSize = [symbolSize, symbolSize];
     }
   }
-  parsedSymbolSize[categoryDim.index] = parsePercent2(parsedSymbolSize[categoryDim.index], categorySize);
-  parsedSymbolSize[valueDim.index] = parsePercent2(parsedSymbolSize[valueDim.index], symbolRepeat ? categorySize : Math.abs(boundingLength));
+  parsedSymbolSize[categoryDim.index] = parsePercent(parsedSymbolSize[categoryDim.index], categorySize);
+  parsedSymbolSize[valueDim.index] = parsePercent(parsedSymbolSize[valueDim.index], symbolRepeat ? categorySize : Math.abs(boundingLength));
   outputSymbolMeta.symbolSize = parsedSymbolSize;
   var symbolScale = outputSymbolMeta.symbolScale = [parsedSymbolSize[0] / symbolPatternSize, parsedSymbolSize[1] / symbolPatternSize];
   symbolScale[valueDim.index] *= (opt.isHorizontal ? -1 : 1) * pxSign;
@@ -15536,7 +15541,7 @@ function prepareLayoutInfo(itemModel, symbolSize, layout2, symbolRepeat, symbolC
       hasEndGap = true;
       symbolMargin = symbolMargin.slice(0, symbolMargin.length - 1);
     }
-    var symbolMarginNumeric = parsePercent2(symbolMargin, symbolSize[valueDim.index]);
+    var symbolMarginNumeric = parsePercent(symbolMargin, symbolSize[valueDim.index]);
     var uLenWithMargin = Math.max(unitLength + symbolMarginNumeric * 2, 0);
     var endFix = hasEndGap ? 0 : symbolMarginNumeric * 2;
     var repeatSpecified = isNumeric(symbolRepeat);
@@ -16246,13 +16251,13 @@ function themeRiverLayout(ecModel, api) {
     var axis = single.getAxis();
     layoutInfo.boundaryGap = boundaryGap;
     if (axis.orient === "horizontal") {
-      boundaryGap[0] = parsePercent2(boundaryGap[0], rect.height);
-      boundaryGap[1] = parsePercent2(boundaryGap[1], rect.height);
+      boundaryGap[0] = parsePercent(boundaryGap[0], rect.height);
+      boundaryGap[1] = parsePercent(boundaryGap[1], rect.height);
       var height = rect.height - boundaryGap[0] - boundaryGap[1];
       doThemeRiverLayout(data, seriesModel, height);
     } else {
-      boundaryGap[0] = parsePercent2(boundaryGap[0], rect.width);
-      boundaryGap[1] = parsePercent2(boundaryGap[1], rect.width);
+      boundaryGap[0] = parsePercent(boundaryGap[0], rect.width);
+      boundaryGap[1] = parsePercent(boundaryGap[1], rect.width);
       var width = rect.width - boundaryGap[0] - boundaryGap[1];
       doThemeRiverLayout(data, seriesModel, width);
     }
@@ -16872,10 +16877,10 @@ function sunburstLayout(seriesType, ecModel, api) {
     var width = api.getWidth();
     var height = api.getHeight();
     var size = Math.min(width, height);
-    var cx = parsePercent2(center2[0], width);
-    var cy = parsePercent2(center2[1], height);
-    var r0 = parsePercent2(radius[0], size / 2);
-    var r = parsePercent2(radius[1], size / 2);
+    var cx = parsePercent(center2[0], width);
+    var cy = parsePercent(center2[1], height);
+    var r0 = parsePercent(radius[0], size / 2);
+    var r = parsePercent(radius[1], size / 2);
     var startAngle = -seriesModel.get("startAngle") * RADIAN3;
     var minAngle = seriesModel.get("minAngle") * RADIAN3;
     var virtualRoot = seriesModel.getData().tree.root;
@@ -16921,8 +16926,8 @@ function sunburstLayout(seriesType, ecModel, api) {
             r0_1 = radius_1[0];
             r_1 = radius_1[1];
           }
-          r0_1 != null && (rStart2 = parsePercent2(r0_1, size / 2));
-          r_1 != null && (rEnd2 = parsePercent2(r_1, size / 2));
+          r0_1 != null && (rStart2 = parsePercent(r0_1, size / 2));
+          r_1 != null && (rEnd2 = parsePercent(r_1, size / 2));
         }
         node.setLayout({
           angle: angle2,

@@ -5,7 +5,8 @@ Knowledge Graph Schemas
 
 from typing import Optional, List, Dict, Any
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
+from app.config.settings import settings
 
 
 # ============================================
@@ -18,7 +19,7 @@ class EntityBase(BaseModel):
     type: str = Field(..., description="实体类型")
     description: Optional[str] = Field(None, description="实体描述")
     aliases: Optional[List[str]] = Field(None, description="实体别名列表")
-    confidence: Optional[float] = Field(0.7, ge=0.0, le=1.0, description="置信度分数")
+    confidence: Optional[float] = Field(None, ge=0.0, le=1.0, description="置信度分数（如果为None，将使用配置中的默认值）")
     metadata: Optional[Dict[str, Any]] = Field(None, description="扩展元数据")
 
 
@@ -77,7 +78,7 @@ class RelationshipBase(BaseModel):
     relation_type: str = Field(..., description="关系类型")
     description: Optional[str] = Field(None, description="关系描述")
     weight: Optional[float] = Field(0.5, ge=0.0, le=1.0, description="关系权重")
-    confidence: Optional[float] = Field(0.7, ge=0.0, le=1.0, description="置信度分数")
+    confidence: Optional[float] = Field(None, ge=0.0, le=1.0, description="置信度分数（如果为None，将使用配置中的默认值）")
     metadata: Optional[Dict[str, Any]] = Field(None, description="扩展元数据")
 
 
@@ -156,6 +157,30 @@ class ExtractionTaskCreate(BaseModel):
     """创建提取任务Schema"""
     knowledge_base_id: int = Field(..., description="知识库ID")
     document_ids: Optional[List[int]] = Field(None, description="文档ID列表（可选，为空表示批量提取）")
+    entity_type_mode: Optional[str] = Field(
+        "system", 
+        description="实体类型提取模式: system(系统默认类型), user(用户创建类型), model(模型自由提取)"
+    )
+    entity_type_codes: Optional[List[str]] = Field(
+        None,
+        description="要提取的实体类型代码列表（可选，仅在system/user模式下有效，必须至少选择一个）"
+    )
+    
+    @field_validator('entity_type_mode')
+    @classmethod
+    def validate_entity_type_mode(cls, v: str) -> str:
+        """验证实体类型模式"""
+        if v not in ['system', 'user', 'model']:
+            raise ValueError('entity_type_mode 必须是 system, user 或 model')
+        return v
+    
+    @model_validator(mode='after')
+    def validate_entity_type_codes(self):
+        """验证实体类型代码列表"""
+        if self.entity_type_mode in ['system', 'user']:
+            if not self.entity_type_codes or len(self.entity_type_codes) == 0:
+                raise ValueError(f'在 {self.entity_type_mode} 模式下，必须至少选择一个实体类型')
+        return self
 
 
 class ExtractionTaskResponse(BaseModel):
@@ -167,10 +192,34 @@ class ExtractionTaskResponse(BaseModel):
     total_entities: int
     total_relationships: int
     error_message: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = Field(
+        default=None,
+        validation_alias="extra_metadata",
+        description="扩展元数据"
+    )
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime] = None
+    
+    @field_validator('metadata', mode='before')
+    @classmethod
+    def _parse_metadata(cls, v: Any) -> Optional[Dict[str, Any]]:
+        """解析metadata字段，避免SQLAlchemy的MetaData对象"""
+        # 如果是None或已经是字典，直接返回
+        if v is None or isinstance(v, dict):
+            return v
+        # 如果是SQLAlchemy的MetaData对象（通过类型判断），返回None
+        if hasattr(v, '__class__') and 'MetaData' in str(type(v)):
+            return None
+        # 如果是字符串，尝试解析JSON
+        if isinstance(v, str):
+            try:
+                import json
+                return json.loads(v)
+            except Exception:
+                return None
+        # 其他情况返回None
+        return None
     
     class Config:
         from_attributes = True
@@ -201,11 +250,14 @@ class VisualizationNode(BaseModel):
 
 class VisualizationEdge(BaseModel):
     """可视化边Schema"""
-    from: int
+    source: int = Field(..., alias="from", serialization_alias="from", description="源节点ID")
     to: int
     label: str
     value: float
     title: str
+    
+    class Config:
+        populate_by_name = True  # 允许使用字段名或别名
 
 
 class VisualizationResponse(BaseModel):

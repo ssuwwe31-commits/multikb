@@ -14,9 +14,11 @@ class ErrorCode:
     """错误代码定义 - 根据设计文档实现"""
     # 通用错误
     VALIDATION_ERROR = "VALIDATION_ERROR"
+    BAD_REQUEST = "BAD_REQUEST"
     NOT_FOUND = "NOT_FOUND"
     UNAUTHORIZED = "UNAUTHORIZED"
     FORBIDDEN = "FORBIDDEN"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
     
     # 文件验证错误
     FILE_NOT_FOUND = "FILE_NOT_FOUND"

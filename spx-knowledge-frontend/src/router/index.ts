@@ -228,6 +228,42 @@ const routes: RouteRecordRaw[] = [
           title: '运维诊断',
           keepAlive: false
         }
+      },
+      {
+        path: 'knowledge-graph',
+        name: 'KnowledgeGraph',
+        component: () => import('@/views/KnowledgeGraph/index.vue'),
+        meta: {
+          title: '知识图谱',
+          keepAlive: true
+        }
+      },
+      {
+        path: 'knowledge-graph/tasks',
+        name: 'KnowledgeGraphTasks',
+        component: () => import('@/views/KnowledgeGraph/Tasks.vue'),
+        meta: {
+          title: '任务列表',
+          keepAlive: true
+        }
+      },
+      {
+        path: 'knowledge-graph/entities',
+        name: 'KnowledgeGraphEntities',
+        component: () => import('@/views/KnowledgeGraph/Entities.vue'),
+        meta: {
+          title: '实体管理',
+          keepAlive: true
+        }
+      },
+      {
+        path: 'knowledge-graph/entity-types',
+        name: 'KnowledgeGraphEntityTypes',
+        component: () => import('@/views/KnowledgeGraph/EntityTypes.vue'),
+        meta: {
+          title: '实体类型管理',
+          keepAlive: true
+        }
       }
     ]
   },

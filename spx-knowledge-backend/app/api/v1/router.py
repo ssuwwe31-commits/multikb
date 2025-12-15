@@ -28,6 +28,7 @@ from app.api.v1.routes import (
     exports,
     tasks,
     knowledge_graph,
+    entity_type,
 )
 from app.dependencies.auth import get_current_user
 
@@ -159,4 +160,10 @@ api_router.include_router(
     knowledge_graph.router,
     prefix="/knowledge-graph",
     tags=["知识图谱"]
+)
+
+api_router.include_router(
+    entity_type.router,
+    prefix="/knowledge-graph",
+    tags=["实体类型管理"]
 )

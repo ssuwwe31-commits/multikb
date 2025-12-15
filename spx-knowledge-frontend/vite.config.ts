@@ -3,9 +3,9 @@ import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
 import autoprefixer from 'autoprefixer'
 
-// 从环境变量获取后端地址，默认 192.168.131.158:8081
+// 从环境变量获取后端地址，默认 localhost:8000
 const getBackendTarget = () => {
-  const apiBaseUrl = process.env.VITE_API_BASE_URL || 'http://192.168.131.158:8081/api'
+  const apiBaseUrl = process.env.VITE_API_BASE_URL || 'http://localhost:8000/api'
   // 移除 /api 后缀，获取基础地址
   return apiBaseUrl.replace('/api', '')
 }

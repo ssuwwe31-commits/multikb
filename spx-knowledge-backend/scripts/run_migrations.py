@@ -1,184 +1,132 @@
-﻿"""
-执行数据库迁移脚本
-从.env文件读取数据库配置，执行migrations目录下的SQL脚本
+#!/usr/bin/env python
 """
-
+执行实体类型相关的数据库迁移脚本
+"""
 import os
 import sys
 from pathlib import Path
-import pymysql
+
+# 添加项目根目录到路径
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
 from dotenv import load_dotenv
+import pymysql
 
-# 加载.env文件
-env_file = Path(__file__).parent.parent / ".env"
-if env_file.exists():
-    load_dotenv(env_file)
-    print(f"✅ 已加载环境变量文件: {env_file}")
-else:
-    print(f"⚠️  未找到.env文件: {env_file}，使用系统环境变量")
+# 加载环境变量
+load_dotenv()
 
-# 从环境变量读取数据库配置
-def get_db_config():
-    """从环境变量读取数据库配置"""
-    # 优先使用DATABASE_URL
-    database_url = os.getenv("DATABASE_URL", "")
-    
-    if database_url and database_url.startswith("mysql+pymysql://"):
-        # 解析DATABASE_URL: mysql+pymysql://user:password@host:port/database
-        url = database_url.replace("mysql+pymysql://", "")
-        parts = url.split("@")
-        if len(parts) == 2:
-            user_pass = parts[0].split(":")
-            host_db = parts[1].split("/")
-            if len(host_db) == 2:
-                host_port = host_db[0].split(":")
-                return {
-                    "host": host_port[0],
-                    "port": int(host_port[1]) if len(host_port) > 1 else 3306,
-                    "user": user_pass[0],
-                    "password": user_pass[1] if len(user_pass) > 1 else "",
-                    "database": host_db[1]
-                }
-    
-    # 使用分项配置
-    return {
-        "host": os.getenv("MYSQL_HOST", "localhost"),
-        "port": int(os.getenv("MYSQL_PORT", "3306")),
-        "user": os.getenv("MYSQL_USER", "user"),
-        "password": os.getenv("MYSQL_PASSWORD", "password"),
-        "database": os.getenv("MYSQL_DATABASE", "spx_knowledge")
-    }
-
-def execute_sql_file(connection, sql_file: Path):
+def execute_sql_file(cursor, sql_file_path):
     """执行SQL文件"""
-    print(f"\n📄 执行迁移脚本: {sql_file.name}")
+    with open(sql_file_path, 'r', encoding='utf-8') as f:
+        sql_content = f.read()
     
+    # 移除USE语句（已经在连接时指定了数据库）
+    sql_content = sql_content.replace('USE `spx_knowledge`;', '').replace('USE spx_knowledge;', '')
+    
+    # 使用pymysql的multi=True执行多条SQL语句
     try:
-        with open(sql_file, 'r', encoding='utf-8') as f:
-            sql_content = f.read()
-        
-        # 分割SQL语句（以分号分隔，忽略注释）
+        # 分割SQL语句
         statements = []
-        current_statement = ""
-        
+        current_statement = []
         for line in sql_content.split('\n'):
             line = line.strip()
             # 跳过注释和空行
-            if not line or line.startswith('--') or line.startswith('#'):
+            if not line or line.startswith('--'):
                 continue
-            
-            current_statement += line + '\n'
-            
-            # 如果行以分号结尾，说明是一个完整的语句
+            current_statement.append(line)
+            # 如果行以分号结尾，说明是一个完整的SQL语句
             if line.endswith(';'):
-                statements.append(current_statement.strip())
-                current_statement = ""
+                statement = ' '.join(current_statement)
+                if statement and statement != ';':
+                    statements.append(statement)
+                current_statement = []
         
-        # 执行所有SQL语句
-        cursor = connection.cursor()
-        success_count = 0
-        error_count = 0
-        
+        # 执行所有语句
+        executed = 0
         for statement in statements:
-            if not statement:
-                continue
-            try:
-                cursor.execute(statement)
-                success_count += 1
-            except Exception as e:
-                error_count += 1
-                print(f"  ❌ SQL语句执行失败: {str(e)[:100]}")
-                print(f"     语句: {statement[:200]}...")
+            if statement.strip() and statement.strip() != ';':
+                try:
+                    cursor.execute(statement)
+                    executed += 1
+                except Exception as e:
+                    # 如果是表已存在的错误，忽略
+                    if 'already exists' in str(e).lower() or 'Duplicate' in str(e):
+                        print(f"  跳过（已存在）: {statement[:50]}...")
+                        continue
+                    raise
         
-        connection.commit()
-        cursor.close()
-        
-        if error_count == 0:
-            print(f"  ✅ 成功执行 {success_count} 条SQL语句")
-            return True
-        else:
-            print(f"  ⚠️  成功 {success_count} 条，失败 {error_count} 条")
-            return False
-            
+        return executed
     except Exception as e:
-        print(f"  ❌ 执行失败: {e}")
-        return False
+        print(f"执行SQL文件时出错: {e}")
+        raise
 
 def main():
     """主函数"""
-    print("=" * 60)
-    print("数据库迁移脚本执行器")
-    print("=" * 60)
-    
     # 获取数据库配置
-    db_config = get_db_config()
-    print(f"\n📊 数据库配置:")
-    print(f"   主机: {db_config['host']}:{db_config['port']}")
-    print(f"   用户: {db_config['user']}")
-    print(f"   数据库: {db_config['database']}")
+    host = os.getenv('MYSQL_HOST', 'localhost')
+    port = int(os.getenv('MYSQL_PORT', 3306))
+    user = os.getenv('MYSQL_USER', 'user')
+    password = os.getenv('MYSQL_PASSWORD', 'password')
+    database = os.getenv('MYSQL_DATABASE', 'spx_knowledge')
     
-    # 连接数据库
+    print(f"连接数据库: {user}@{host}:{port}/{database}")
+    
     try:
-        connection = pymysql.connect(
-            host=db_config['host'],
-            port=db_config['port'],
-            user=db_config['user'],
-            password=db_config['password'],
-            database=db_config['database'],
-            charset='utf8mb4',
-            cursorclass=pymysql.cursors.DictCursor
+        # 连接数据库
+        conn = pymysql.connect(
+            host=host,
+            port=port,
+            user=user,
+            password=password,
+            database=database,
+            charset='utf8mb4'
         )
-        print(f"\n✅ 数据库连接成功")
-    except Exception as e:
-        print(f"\n❌ 数据库连接失败: {e}")
-        sys.exit(1)
-    
-    # 获取migrations目录
-    migrations_dir = Path(__file__).parent.parent / "migrations"
-    if not migrations_dir.exists():
-        print(f"\n❌ migrations目录不存在: {migrations_dir}")
-        sys.exit(1)
-    
-    # 获取所有SQL文件，按文件名排序
-    sql_files = sorted(migrations_dir.glob("*.sql"))
-    
-    if not sql_files:
-        print(f"\n⚠️  未找到SQL迁移脚本")
-        sys.exit(0)
-    
-    print(f"\n📁 找到 {len(sql_files)} 个迁移脚本:")
-    for sql_file in sql_files:
-        print(f"   - {sql_file.name}")
-    
-    # 询问是否执行
-    print(f"\n❓ 是否执行这些迁移脚本？(y/n): ", end="")
-    response = input().strip().lower()
-    if response not in ['y', 'yes', '是']:
-        print("❌ 已取消")
-        connection.close()
-        sys.exit(0)
-    
-    # 执行所有迁移脚本
-    print(f"\n🚀 开始执行迁移脚本...")
-    success_count = 0
-    failed_count = 0
-    
-    for sql_file in sql_files:
-        if execute_sql_file(connection, sql_file):
-            success_count += 1
+        cursor = conn.cursor()
+        
+        # 执行迁移脚本1
+        print("\n执行迁移脚本1: 2025120802_entity_types_tables.sql")
+        migration1 = project_root / 'migrations' / '2025120802_entity_types_tables.sql'
+        if migration1.exists():
+            executed = execute_sql_file(cursor, migration1)
+            conn.commit()
+            print(f"✓ 迁移脚本1执行成功，执行了 {executed} 条SQL语句")
         else:
-            failed_count += 1
-    
-    # 关闭连接
-    connection.close()
-    
-    # 输出结果
-    print(f"\n" + "=" * 60)
-    print(f"迁移完成: 成功 {success_count} 个，失败 {failed_count} 个")
-    print("=" * 60)
-    
-    if failed_count > 0:
+            print(f"✗ 迁移脚本1不存在: {migration1}")
+        
+        # 执行迁移脚本2
+        print("\n执行迁移脚本2: 2025120803_industry_template_entity_types.sql")
+        migration2 = project_root / 'migrations' / '2025120803_industry_template_entity_types.sql'
+        if migration2.exists():
+            executed = execute_sql_file(cursor, migration2)
+            conn.commit()
+            print(f"✓ 迁移脚本2执行成功，执行了 {executed} 条SQL语句")
+        else:
+            print(f"✗ 迁移脚本2不存在: {migration2}")
+        
+        # 验证数据
+        print("\n验证数据...")
+        cursor.execute('SELECT COUNT(*) FROM entity_types')
+        count = cursor.fetchone()[0]
+        print(f"✓ 实体类型总数: {count}")
+        
+        cursor.execute('SELECT code, name, is_system FROM entity_types ORDER BY sort_order')
+        types = cursor.fetchall()
+        print(f"\n实体类型列表（共{len(types)}个）:")
+        for t in types:
+            system_tag = "系统" if t[2] else "自定义"
+            print(f"  - {t[0]:20s} {t[1]:15s} ({system_tag})")
+        
+        cursor.close()
+        conn.close()
+        
+        print("\n✓ 迁移完成！")
+        
+    except Exception as e:
+        print(f"\n✗ 迁移失败: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

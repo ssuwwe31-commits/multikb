@@ -1,10 +1,11 @@
-﻿"""
+"""
 Configuration Management
 """
 
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
+from pydantic import field_validator
 from pydantic_settings import BaseSettings  # type: ignore
 
 # 计算项目根目录，确保无论从哪里运行都能找到根目录下的 .env
@@ -93,7 +94,7 @@ class Settings(BaseSettings):
     OCR_PREPROCESS_DENOISE: bool = False
     OLLAMA_OCR_MODEL: str = "qwen2-vl:7b"
     OLLAMA_OCR_BASE_URL: str | None = None
-    OLLAMA_OCR_TIMEOUT: int = 300  # 增加到 300 秒（5分钟），适配大图片 OCR 处理
+    OLLAMA_OCR_TIMEOUT: int = 600  # 增加到 600 秒（10分钟），适配大图片和复杂图片 OCR 处理
     OLLAMA_OCR_MAX_RETRIES: int = 2
     
     # QA系统配置
@@ -336,14 +337,54 @@ class Settings(BaseSettings):
     VECTORIZATION_TIMEOUT: int = 600
     OLLAMA_TIMEOUT: int = 300
     
+    # 实体提取相关配置
+    ENTITY_EXTRACTION_CHUNK_SIZE: int = 8000  # 实体提取块大小（LLM上下文）
+    ENTITY_EXTRACTION_CHUNK_OVERLAP_RATIO: float = 0.2  # 重叠比例（20%）
+    ENTITY_EXTRACTION_MAX_CONCURRENT: int = 5  # 最大并发数
+    ENTITY_EXTRACTION_CROSS_CHUNK_ENABLED: bool = True  # 是否启用跨块关系检测
+    
+    # 知识图谱置信度配置
+    KG_ENTITY_DEFAULT_CONFIDENCE: float = 0.7  # 实体默认置信度
+    KG_RELATIONSHIP_DEFAULT_CONFIDENCE: float = 0.7  # 关系默认置信度
+    KG_HIGH_CONFIDENCE_THRESHOLD: float = 0.9  # 高置信度阈值（用于明确的关系/实体）
+    KG_LOW_CONFIDENCE_THRESHOLD: float = 0.7  # 低置信度阈值（用于推测的关系/实体）
+    KG_PENDING_VERIFICATION_CONFIDENCE: float = 0.6  # 待验证关系/实体的置信度
+    # 知识图谱日志配置
+    KG_VERBOSE_LOGGING: bool = True  # 是否输出详细的图存储操作日志（单个实体/关系的插入日志），默认true，可通过.env设置为false以减少日志量
+    
     # 分块存储策略
     STORE_CHUNK_TEXT_IN_DB: bool = False
     
     # NebulaGraph配置
     USE_NEBULA_GRAPH: bool = False  # 是否启用NebulaGraph
-    NEBULA_HOSTS: List[tuple] = [("127.0.0.1", 9669)]  # NebulaGraph地址列表
+    NEBULA_HOSTS: Union[str, List[tuple]] = [("127.0.0.1", 9669)]  # NebulaGraph地址列表，支持字符串格式 "host:port" 或 "host1:port1,host2:port2"
     NEBULA_USER: str = "root"  # NebulaGraph用户名
     NEBULA_PASSWORD: str = "password"  # NebulaGraph密码
+    
+    @field_validator('NEBULA_HOSTS', mode='before')
+    @classmethod
+    def parse_nebula_hosts(cls, v):
+        """解析NEBULA_HOSTS环境变量
+        
+        支持格式：
+        - List[tuple]: [("127.0.0.1", 9669)]
+        - str: "host:port" 或 "host1:port1,host2:port2"
+        """
+        if isinstance(v, str):
+            # 解析字符串格式 "host:port" 或 "host1:port1,host2:port2"
+            hosts = []
+            for host_str in v.split(','):
+                host_str = host_str.strip()
+                if ':' in host_str:
+                    host, port = host_str.rsplit(':', 1)
+                    try:
+                        hosts.append((host.strip(), int(port.strip())))
+                    except ValueError:
+                        raise ValueError(f"Invalid NEBULA_HOSTS format: {host_str}. Expected 'host:port'")
+                else:
+                    raise ValueError(f"Invalid NEBULA_HOSTS format: {host_str}. Expected 'host:port'")
+            return hosts
+        return v
 
     # 兼容历史环境变量（忽略未使用但不报错）
     SOFFICE_PATH: Optional[str] = None  # 旧的 libreoffice 路径，当前未使用

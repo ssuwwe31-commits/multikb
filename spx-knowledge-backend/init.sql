@@ -1,4 +1,4 @@
-﻿-- SPX Knowledge Base MySQL 初始化SQL
+-- SPX Knowledge Base MySQL 初始化SQL
 -- 创建数据库
 
 CREATE DATABASE IF NOT EXISTS `spx_knowledge` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS `knowledge_bases` (
     `visibility` VARCHAR(20) NOT NULL DEFAULT 'private' COMMENT '可见性: private/shared/public(预留)',
     `is_active` BOOLEAN DEFAULT TRUE COMMENT '是否激活',
     `enable_auto_tagging` BOOLEAN DEFAULT TRUE COMMENT '是否启用自动标签/摘要（知识库级别配置）',
+    `enable_auto_entity_extraction` BOOLEAN DEFAULT TRUE COMMENT '是否启用自动实体提取（知识库级别配置）',
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `is_deleted` BOOLEAN DEFAULT FALSE COMMENT '是否删除',
@@ -666,7 +667,7 @@ CREATE TABLE IF NOT EXISTS `knowledge_graph_entities` (
     FOREIGN KEY (`knowledge_base_id`) REFERENCES `knowledge_bases` (`id`) ON DELETE CASCADE,
     FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
     UNIQUE KEY `uk_kb_name_type` (`knowledge_base_id`, `name`, `type`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识图谱实体表（主存储，用于列表查询、统计查询、关联查询）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识图谱实体表（索引存储，完整数据优先存储在NebulaGraph）';
 
 -- 21.2 知识图谱关系表
 CREATE TABLE IF NOT EXISTS `knowledge_graph_relationships` (
@@ -701,7 +702,7 @@ CREATE TABLE IF NOT EXISTS `knowledge_graph_relationships` (
     FOREIGN KEY (`target_entity_id`) REFERENCES `knowledge_graph_entities` (`id`) ON DELETE CASCADE,
     FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
     UNIQUE KEY `uk_source_target_relation` (`source_entity_id`, `target_entity_id`, `relation_type`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识图谱关系表（主存储，用于列表查询、统计查询）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识图谱关系表（索引存储，完整数据优先存储在NebulaGraph）';
 
 -- 21.3 实体-文档关联表
 CREATE TABLE IF NOT EXISTS `knowledge_graph_entity_documents` (
@@ -746,6 +747,96 @@ CREATE TABLE IF NOT EXISTS `knowledge_graph_extraction_tasks` (
     FOREIGN KEY (`knowledge_base_id`) REFERENCES `knowledge_bases` (`id`) ON DELETE CASCADE,
     FOREIGN KEY (`document_id`) REFERENCES `documents` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='实体提取任务表';
+
+-- ============================================
+-- 22. 实体类型管理相关表
+-- ============================================
+
+-- 22.1 实体类型配置表
+CREATE TABLE IF NOT EXISTS `entity_types` (
+    `id` INT PRIMARY KEY AUTO_INCREMENT,
+    `code` VARCHAR(50) NOT NULL COMMENT '类型代码（唯一标识，如：person、location）',
+    `name` VARCHAR(100) NOT NULL COMMENT '类型名称（中文标签，如：人物、地点）',
+    `description` TEXT COMMENT '类型描述',
+    `icon` VARCHAR(100) COMMENT '图标名称或URL',
+    `color` VARCHAR(20) COMMENT '颜色代码（如：#FF6B6B）',
+    `tag_type` VARCHAR(20) COMMENT '标签类型（用于前端显示，如：danger、success、primary）',
+    `sort_order` INT DEFAULT 0 COMMENT '排序顺序（数字越小越靠前）',
+    `is_system` BOOLEAN DEFAULT FALSE COMMENT '是否系统内置类型（系统类型不可删除）',
+    `is_enabled` BOOLEAN DEFAULT TRUE COMMENT '是否启用',
+    `metadata` JSON COMMENT '扩展元数据（如：提取提示词、示例等）',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `is_deleted` BOOLEAN DEFAULT FALSE COMMENT '是否删除',
+    UNIQUE KEY `uk_code` (`code`),
+    INDEX `idx_enabled` (`is_enabled`, `is_deleted`),
+    INDEX `idx_sort` (`sort_order`, `is_enabled`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='实体类型配置表';
+
+-- 22.2 知识库实体类型关联表
+CREATE TABLE IF NOT EXISTS `knowledge_base_entity_types` (
+    `id` INT PRIMARY KEY AUTO_INCREMENT,
+    `knowledge_base_id` INT NOT NULL COMMENT '知识库ID',
+    `entity_type_id` INT NOT NULL COMMENT '实体类型ID',
+    `is_enabled` BOOLEAN DEFAULT TRUE COMMENT '是否在该知识库中启用',
+    `sort_order` INT DEFAULT 0 COMMENT '在该知识库中的排序顺序',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    UNIQUE KEY `uk_kb_type` (`knowledge_base_id`, `entity_type_id`),
+    INDEX `idx_kb` (`knowledge_base_id`, `is_enabled`),
+    FOREIGN KEY (`knowledge_base_id`) REFERENCES `knowledge_bases` (`id`) ON DELETE CASCADE,
+    FOREIGN KEY (`entity_type_id`) REFERENCES `entity_types` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识库实体类型关联表（支持知识库级别的类型配置）';
+
+-- 22.3 插入默认实体类型数据
+INSERT INTO `entity_types` (`code`, `name`, `description`, `icon`, `color`, `tag_type`, `sort_order`, `is_system`, `is_enabled`, `metadata`) VALUES
+('person', '人物', '个人、角色、用户等', 'user', '#FF6B6B', 'danger', 1, TRUE, TRUE, '{"examples": ["张三", "Linus Torvalds"], "prompt_hint": "人物（如：张三、Linus Torvalds）"}'),
+('location', '地点', '地理位置、场所、地址等', 'location', '#4ECDC4', 'success', 2, TRUE, TRUE, '{"examples": ["北京", "GitHub"], "prompt_hint": "地点（如：北京、GitHub）"}'),
+('concept', '概念', '抽象概念、理论、思想等', 'lightbulb', '#45B7D1', 'primary', 3, TRUE, TRUE, '{"examples": ["异步编程", "面向对象"], "prompt_hint": "概念（如：异步编程、面向对象）"}'),
+('product', '产品', '商品、服务、产品等', 'shopping', '#FFA07A', 'warning', 4, TRUE, TRUE, '{"examples": ["MySQL", "Redis"], "prompt_hint": "产品（如：MySQL、Redis）"}'),
+('technology', '技术', '技术、方法、技能等', 'cpu', '#98D8C8', 'info', 5, TRUE, TRUE, '{"examples": ["Python", "FastAPI"], "prompt_hint": "技术（如：Python、FastAPI）"}'),
+('event', '事件', '事件、活动、发生的事等', 'calendar', '#F7DC6F', '', 6, TRUE, TRUE, '{"examples": ["Python 3.12发布"], "prompt_hint": "事件（如：Python 3.12发布）"}'),
+('organization', '组织', '组织、机构、公司等', 'office-building', '#BB8FCE', 'success', 7, TRUE, TRUE, '{"examples": ["Python Software Foundation"], "prompt_hint": "组织（如：Python Software Foundation）"}'),
+('other', '其他', '其他未分类的实体', 'more', '#95A5A6', 'info', 8, TRUE, TRUE, '{"examples": [], "prompt_hint": "其他"}')
+ON DUPLICATE KEY UPDATE `name`=VALUES(`name`), `description`=VALUES(`description`);
+
+-- 22.4 插入行业模板实体类型数据
+-- 技术文档行业特定类型
+INSERT INTO `entity_types` (`code`, `name`, `description`, `icon`, `color`, `tag_type`, `sort_order`, `is_system`, `is_enabled`, `metadata`) VALUES
+('framework', '框架', '软件开发框架', 'grid', '#4ECDC4', 'success', 10, FALSE, TRUE, '{"template": "technology", "prompt_hint": "框架（如：React、Vue、Django）"}'),
+('standard', '标准', '技术标准、规范', 'document', '#45B7D1', 'primary', 11, FALSE, TRUE, '{"template": "technology", "prompt_hint": "标准（如：HTTP、REST、JSON）"}'),
+('method', '方法', '技术方法、算法', 'tools', '#FFA07A', 'warning', 12, FALSE, TRUE, '{"template": "technology", "prompt_hint": "方法（如：敏捷开发、TDD）"}'),
+('document', '文档', '技术文档、规范文档', 'document', '#95A5A6', 'info', 13, FALSE, TRUE, '{"template": "technology", "prompt_hint": "文档（如：API文档、设计文档）"}')
+ON DUPLICATE KEY UPDATE `name`=VALUES(`name`), `description`=VALUES(`description`);
+
+-- 医疗健康行业特定类型
+INSERT INTO `entity_types` (`code`, `name`, `description`, `icon`, `color`, `tag_type`, `sort_order`, `is_system`, `is_enabled`, `metadata`) VALUES
+('disease', '疾病', '疾病、病症', 'warning', '#FF6B6B', 'danger', 20, FALSE, TRUE, '{"template": "medical", "parent_type": "concept", "prompt_hint": "疾病（如：高血压、糖尿病）"}'),
+('drug', '药物', '药品、药物', 'medicine-box', '#4ECDC4', 'success', 21, FALSE, TRUE, '{"template": "medical", "parent_type": "product", "prompt_hint": "药物（如：阿司匹林、青霉素）"}'),
+('treatment', '治疗方法', '治疗方案、治疗方法', 'first-aid-kit', '#45B7D1', 'primary', 22, FALSE, TRUE, '{"template": "medical", "parent_type": "method", "prompt_hint": "治疗方法（如：手术治疗、药物治疗）"}')
+ON DUPLICATE KEY UPDATE `name`=VALUES(`name`), `description`=VALUES(`description`);
+
+-- 法律行业特定类型
+INSERT INTO `entity_types` (`code`, `name`, `description`, `icon`, `color`, `tag_type`, `sort_order`, `is_system`, `is_enabled`, `metadata`) VALUES
+('law', '法律', '法律法规、法律条文', 'document', '#4ECDC4', 'success', 30, FALSE, TRUE, '{"template": "legal", "parent_type": "document", "prompt_hint": "法律（如：民法典、刑法）"}'),
+('case', '案例', '法律案例、判例', 'folder-opened', '#45B7D1', 'primary', 31, FALSE, TRUE, '{"template": "legal", "parent_type": "event", "prompt_hint": "案例（如：XX诉XX案）"}')
+ON DUPLICATE KEY UPDATE `name`=VALUES(`name`), `description`=VALUES(`description`);
+
+-- 金融行业特定类型
+INSERT INTO `entity_types` (`code`, `name`, `description`, `icon`, `color`, `tag_type`, `sort_order`, `is_system`, `is_enabled`, `metadata`) VALUES
+('financial_product', '金融产品', '金融产品、理财产品', 'wallet', '#4ECDC4', 'success', 40, FALSE, TRUE, '{"template": "finance", "parent_type": "product", "prompt_hint": "金融产品（如：股票、基金、保险）"}'),
+('market', '市场', '金融市场、市场', 'trend-charts', '#45B7D1', 'primary', 41, FALSE, TRUE, '{"template": "finance", "parent_type": "concept", "prompt_hint": "市场（如：股票市场、债券市场）"}')
+ON DUPLICATE KEY UPDATE `name`=VALUES(`name`), `description`=VALUES(`description`);
+
+-- 教育行业特定类型
+INSERT INTO `entity_types` (`code`, `name`, `description`, `icon`, `color`, `tag_type`, `sort_order`, `is_system`, `is_enabled`, `metadata`) VALUES
+('course', '课程', '课程、课程内容', 'reading', '#4ECDC4', 'success', 50, FALSE, TRUE, '{"template": "education", "parent_type": "concept", "prompt_hint": "课程（如：高等数学、数据结构）"}'),
+('subject', '学科', '学科、专业', 'notebook', '#45B7D1', 'primary', 51, FALSE, TRUE, '{"template": "education", "parent_type": "concept", "prompt_hint": "学科（如：计算机科学、数学）"}')
+ON DUPLICATE KEY UPDATE `name`=VALUES(`name`), `description`=VALUES(`description`);
+
+-- 22.5 更新现有实体表的type字段注释
+ALTER TABLE `knowledge_graph_entities` 
+MODIFY COLUMN `type` VARCHAR(50) NOT NULL COMMENT '实体类型（关联entity_types表的code字段）';
 
 -- ============================================
 -- 初始化完成

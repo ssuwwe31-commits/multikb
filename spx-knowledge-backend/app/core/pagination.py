@@ -50,6 +50,28 @@ def paginate(
         has_prev=has_prev
     )
 
+def paginate_response(
+    data: List[Any],
+    total: int,
+    page: int,
+    size: int
+) -> dict:
+    """分页响应（返回字典格式，兼容FastAPI）"""
+    pages = (total + size - 1) // size if size > 0 else 0
+    has_next = page < pages
+    has_prev = page > 1
+    
+    return {
+        "list": data,  # 使用list作为键名，兼容前端
+        "items": data,  # 同时提供items键名
+        "total": total,
+        "page": page,
+        "size": size,
+        "pages": pages,
+        "has_next": has_next,
+        "has_prev": has_prev
+    }
+
 def get_offset(page: int, size: int) -> int:
     """获取偏移量"""
     return (page - 1) * size

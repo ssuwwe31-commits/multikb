@@ -1,8 +1,6 @@
-RAGDOCS/
 # 只忽略这两个目录，其他代码都需要同步
-docs/
 spx-knowledge-backend/models/
-
+docs/models/
 # Python
 __pycache__/
 *.py[cod]

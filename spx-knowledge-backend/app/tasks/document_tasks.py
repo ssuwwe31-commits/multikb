@@ -1604,6 +1604,27 @@ def process_document_task(self, document_id: int):
         except Exception as e:
             logger.warning(f"[任务ID: {task_id}] 分块归档到 MinIO 失败: {e}")
 
+        # ✅ 保存完整文档文本内容到 parsed/content.json（用于实体提取）
+        try:
+            minio = MinioStorageService()
+            # 从parse_result中获取完整文本内容
+            full_text_content = parse_result.get('text_content', '') if parse_result else ''
+            if full_text_content:
+                # 构建content.json数据结构
+                content_data = {
+                    'text_content': full_text_content,
+                    'document_id': document_id,
+                    'metadata': parse_result.get('metadata', {}) if parse_result else {},
+                    'elements_count': elements_count,
+                    'text_length': len(full_text_content)
+                }
+                minio.upload_parsed_content(str(document_id), content_data)
+                logger.info(f"[任务ID: {task_id}] 完整文档文本内容已保存到 parsed/content.json，长度={len(full_text_content)} 字符")
+            else:
+                logger.warning(f"[任务ID: {task_id}] 未找到完整文本内容，跳过保存 parsed/content.json")
+        except Exception as e:
+            logger.warning(f"[任务ID: {task_id}] 保存完整文档文本内容到 parsed/content.json 失败: {e}")
+
         # 图片处理流水线（若解析结果包含图片二进制，则落 MinIO + 入库 + 向量化 + 索引）
         def _process_images():
             images_meta = parse_result.get('images', []) or []
@@ -2279,6 +2300,9 @@ def process_document_task(self, document_id: int):
         logger.info(f"[任务ID: {task_id}] 处理统计: 总耗时={total_time:.2f}秒, "
                    f"文件大小={len(file_content)} bytes, 分块数={len(chunks)}, 已索引={len(docs_to_index)}条, "
                    f"文本长度={len(text_content)} 字符")
+        
+        # 实体提取已改为手动触发，不再自动执行
+        # 用户可以在前端"知识图谱可视化"页面手动点击"提取实体"按钮触发
         
         current_task.update_state(
             state="SUCCESS",

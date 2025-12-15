@@ -344,7 +344,7 @@
     <section class="py-20 bg-gradient-to-br from-blue-600 to-purple-600 text-white">
       <div class="max-w-4xl mx-auto px-6 lg:px-8 text-center">
         <h2 class="text-4xl md:text-5xl font-bold mb-6">
-          开始使用 Knowledge Base
+          开始使用 Multikb Base
         </h2>
         <p class="text-xl text-blue-100 mb-8">
           体验完整的企业级知识库管理功能

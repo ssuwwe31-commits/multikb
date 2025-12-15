@@ -264,7 +264,7 @@ const gettingStartedDocs = [
   {
     icon: '⚡',
     title: '5分钟快速开始',
-    description: '5分钟快速上手 Knowledge Base，体验核心功能',
+    description: '5分钟快速上手 Multikb Base，体验核心功能',
     link: '/docs/getting-started'
   },
   {

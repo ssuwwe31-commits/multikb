@@ -31,6 +31,25 @@
         <span>智能问答</span>
       </el-menu-item>
       
+      <el-sub-menu index="/knowledge-graph">
+        <template #title>
+          <el-icon><Connection /></el-icon>
+          <span>知识图谱</span>
+        </template>
+        <el-menu-item index="/knowledge-graph">
+          <span>可视化</span>
+        </el-menu-item>
+        <el-menu-item index="/knowledge-graph/tasks">
+          <span>任务列表</span>
+        </el-menu-item>
+        <el-menu-item index="/knowledge-graph/entities">
+          <span>实体管理</span>
+        </el-menu-item>
+        <el-menu-item index="/knowledge-graph/entity-types">
+          <span>实体类型管理</span>
+        </el-menu-item>
+      </el-sub-menu>
+      
       <el-menu-item index="/images">
         <el-icon><Picture /></el-icon>
         <span>图片管理</span>
@@ -66,7 +85,8 @@ import {
   Picture,
   DataAnalysis,
   Download,
-  DataBoard
+  DataBoard,
+  Connection
 } from '@element-plus/icons-vue'
 
 interface Props {
@@ -111,6 +131,26 @@ const activeMenu = computed(() => route.path)
         background: rgba(64, 158, 255, 0.2);
         color: #409eff;
         border-right: 3px solid #409eff;
+      }
+    }
+
+    .el-sub-menu {
+      .el-sub-menu__title {
+        color: rgba(255, 255, 255, 0.7);
+        transition: all 0.3s ease;
+
+        &:hover {
+          background: rgba(64, 158, 255, 0.2);
+          color: #409eff;
+        }
+      }
+
+      &.is-opened > .el-sub-menu__title {
+        color: #409eff;
+      }
+
+      .el-menu-item {
+        padding-left: 50px !important;
       }
     }
   }

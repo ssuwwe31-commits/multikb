@@ -11,11 +11,11 @@
  * - VITE_WS_BASE_URL: WebSocket基础地址（包含协议），例如: ws://localhost:8000
  */
 
-// API基础地址（默认值：192.168.131.158:8081）
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://192.168.131.158:8081/api'
+// API基础地址（默认值：localhost:8000）
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api'
 
-// WebSocket基础地址（默认值：192.168.131.158:8081）
-export const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL || 'ws://192.168.131.158:8081'
+// WebSocket基础地址（默认值：localhost:8000）
+export const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:8000'
 
 // 从API地址提取主机和端口（用于Vite代理配置）
 export const getBackendHost = (): string => {
@@ -23,6 +23,6 @@ export const getBackendHost = (): string => {
     const url = new URL(API_BASE_URL.replace('/api', ''))
     return `${url.protocol}//${url.host}`
   } catch {
-    return 'http://192.168.131.158:8081'
+    return 'http://localhost:8000'
   }
 }

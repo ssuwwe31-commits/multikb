@@ -23,7 +23,7 @@
         <!-- Main Title -->
         <h1 class="text-6xl md:text-7xl lg:text-8xl font-bold mb-6 animate-slide-up">
           <span class="bg-gradient-to-r from-blue-600 via-purple-600 to-blue-600 bg-clip-text text-transparent bg-[length:200%_auto] animate-gradient">
-            Knowledge Base
+            Multikb Base
           </span>
         </h1>
 

@@ -24,6 +24,11 @@ class KnowledgeBase(BaseModel):
         default=True,
         comment="是否启用自动标签/摘要（知识库级别配置）",
     )
+    enable_auto_entity_extraction = Column(
+        Boolean,
+        default=True,
+        comment="是否启用自动实体提取（知识库级别配置）",
+    )
     visibility = Column(
         String(20),
         default="private",
