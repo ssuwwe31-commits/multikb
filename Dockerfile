@@ -2,7 +2,7 @@ FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHON_VERSION=3.11.14 \
-    APP_HOME=/opt/spx-knowledge-backend
+    APP_HOME=/opt/multikb-knowledge-backend
 
 # System packages required to build Python and common binary wheels
 RUN apt-get update && apt-get install -y --no-install-recommends \

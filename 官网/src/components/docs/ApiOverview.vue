@@ -319,7 +319,7 @@ Content-Type: application/json</pre>
       </div>
 
       <div class="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-xl p-6 border-2 border-indigo-100">
-        <p class="text-gray-700 mb-4">Knowledge Base 提供完整的OpenAPI 3.0规范文档：</p>
+        <p class="text-gray-700 mb-4">Multikb Base 提供完整的OpenAPI 3.0规范文档：</p>
         <div class="space-y-3">
           <div>
             <h3 class="font-semibold text-gray-900 mb-2">Swagger UI</h3>

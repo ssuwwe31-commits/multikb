@@ -15,7 +15,7 @@
             </span>
           </h1>
           <p class="text-xl text-gray-600 dark:text-gray-300">
-            看看我们的客户如何使用 Knowledge Base 提升团队协作效率
+            看看我们的客户如何使用 Multikb Base 提升团队协作效率
           </p>
         </div>
       </div>

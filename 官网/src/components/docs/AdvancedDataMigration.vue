@@ -103,7 +103,7 @@
           <div>
             <h3 class="text-lg font-bold text-gray-900 mb-2">迁移场景</h3>
             <ul class="list-disc list-inside space-y-1 text-sm text-gray-700 ml-4">
-              <li>从其他系统迁移到Knowledge Base</li>
+              <li>从其他系统迁移到Multikb Base</li>
               <li>在不同环境间迁移数据</li>
               <li>合并多个知识库</li>
             </ul>

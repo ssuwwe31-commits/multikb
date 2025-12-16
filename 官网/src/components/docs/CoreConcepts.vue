@@ -6,7 +6,7 @@
         核心概念
       </h1>
       <p class="text-xl text-gray-600 dark:text-gray-300">
-        了解 Knowledge Base 的核心概念，帮助您更好地理解和使用系统
+        了解 Multikb Base 的核心概念，帮助您更好地理解和使用系统
       </p>
     </div>
 
@@ -22,7 +22,7 @@
       <div class="bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 rounded-xl p-6 mb-6 border-2 border-blue-100 dark:border-blue-800">
         <h3 class="text-xl font-bold text-gray-900 dark:text-gray-100 mb-3">定义</h3>
         <p class="text-gray-700 dark:text-gray-300 leading-relaxed">
-          <strong>知识库</strong>是 Knowledge Base 中的核心组织单元，用于管理和组织相关的文档和知识。
+          <strong>知识库</strong>是 Multikb Base 中的核心组织单元，用于管理和组织相关的文档和知识。
         </p>
       </div>
 
@@ -88,7 +88,7 @@
       </div>
 
       <h3 class="text-xl font-bold text-gray-900 mb-4">文档类型</h3>
-      <p class="text-gray-700 mb-4">Knowledge Base 支持 <strong>9种文档格式</strong>：</p>
+      <p class="text-gray-700 mb-4">Multikb Base 支持 <strong>9种文档格式</strong>：</p>
       <div class="grid md:grid-cols-3 gap-4 mb-6">
         <div v-for="format in documentFormats" :key="format.name" 
              class="p-4 rounded-lg bg-white border-2 border-gray-200 hover:border-green-300 transition-all">
@@ -134,7 +134,7 @@
       </div>
 
       <h3 class="text-xl font-bold text-gray-900 mb-4">分块策略</h3>
-      <p class="text-gray-700 mb-4">Knowledge Base 采用<strong>智能分块</strong>策略：</p>
+      <p class="text-gray-700 mb-4">Multikb Base 采用<strong>智能分块</strong>策略：</p>
       <ul class="space-y-3 mb-6">
         <li class="flex items-start space-x-3">
           <span class="w-2 h-2 bg-purple-500 rounded-full mt-2 flex-shrink-0"></span>
@@ -209,7 +209,7 @@
         <h2 class="text-3xl font-bold text-gray-900">检索策略</h2>
       </div>
 
-      <p class="text-gray-700 mb-6">Knowledge Base 提供 <strong>6种检索策略</strong>：</p>
+      <p class="text-gray-700 mb-6">Multikb Base 提供 <strong>6种检索策略</strong>：</p>
       <div class="grid md:grid-cols-2 gap-6">
         <div v-for="strategy in retrievalStrategies" :key="strategy.name" 
              class="p-6 rounded-xl bg-white border-2 border-gray-200 hover:border-cyan-300 transition-all">

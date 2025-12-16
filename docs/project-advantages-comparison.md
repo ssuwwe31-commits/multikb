@@ -532,9 +532,9 @@
 - `docs/k8sfunction/` - K8s监控设计
 
 ### 11.2 核心代码
-- `spx-knowledge-backend/app/services/` - 业务服务层（50+服务）
-- `spx-knowledge-backend/app/api/v1/routes/` - API路由层（15个路由文件）
-- `spx-knowledge-backend/app/tasks/` - 异步任务层
+- `multikb-knowledge-backend/app/services/` - 业务服务层（50+服务）
+- `multikb-knowledge-backend/app/api/v1/routes/` - API路由层（15个路由文件）
+- `multikb-knowledge-backend/app/tasks/` - 异步任务层
 
 ### 11.3 统计数据
 - 91个API接口（GET 38、POST 35、PUT 5、DELETE 4、WebSocket 3）

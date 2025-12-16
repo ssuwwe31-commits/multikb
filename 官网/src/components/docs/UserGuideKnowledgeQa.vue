@@ -49,7 +49,7 @@
       </div>
 
       <div class="bg-gradient-to-br from-orange-50 to-red-50 rounded-xl p-6 border-2 border-orange-100">
-        <p class="text-gray-700 mb-4">Knowledge Base 提供六种检索策略，系统会根据问题自动选择最佳策略：</p>
+        <p class="text-gray-700 mb-4">Multikb Base 提供六种检索策略，系统会根据问题自动选择最佳策略：</p>
         <div class="grid md:grid-cols-2 gap-4">
           <div>
             <h4 class="font-semibold text-gray-900 mb-2">1. 向量检索</h4>

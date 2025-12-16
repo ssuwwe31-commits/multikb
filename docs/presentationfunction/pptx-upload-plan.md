@@ -523,7 +523,7 @@ if settings.ENABLE_PREVIEW_GENERATION and is_office:
 
 ### 6.4 PptxService 接口设计
 
-**文件位置**：`spx-knowledge-backend/app/services/pptx_service.py`
+**文件位置**：`multikb-knowledge-backend/app/services/pptx_service.py`
 
 ```python
 from typing import Dict, Any, List, Optional

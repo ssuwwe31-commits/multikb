@@ -18,8 +18,8 @@ PDF 文档处理流程分为以下几个主要阶段：
 
 ### 1. 文档上传阶段
 
-**位置**: `spx-knowledge-backend/app/api/v1/routes/documents.py` (第121-184行)
-**服务**: `spx-knowledge-backend/app/services/document_service.py` (第72-213行)
+**位置**: `multikb-knowledge-backend/app/api/v1/routes/documents.py` (第121-184行)
+**服务**: `multikb-knowledge-backend/app/services/document_service.py` (第72-213行)
 
 **流程**:
 1. **接收上传请求**:
@@ -70,8 +70,8 @@ task = process_document_task.delay(document.id)
 
 ### 2. 文档解析阶段
 
-**位置**: `spx-knowledge-backend/app/tasks/document_tasks.py` (第105-144行)
-**服务**: `spx-knowledge-backend/app/services/pdf_service.py` (第154-565行)
+**位置**: `multikb-knowledge-backend/app/tasks/document_tasks.py` (第105-144行)
+**服务**: `multikb-knowledge-backend/app/services/pdf_service.py` (第154-565行)
 
 **流程**:
 
@@ -188,7 +188,7 @@ image = {
 
 ### 3. 文档分块阶段
 
-**位置**: `spx-knowledge-backend/app/tasks/document_tasks.py` (第387-745行)
+**位置**: `multikb-knowledge-backend/app/tasks/document_tasks.py` (第387-745行)
 
 **流程**:
 
@@ -259,8 +259,8 @@ chunk_meta = {
 
 ### 4. 目录提取阶段
 
-**位置**: `spx-knowledge-backend/app/tasks/document_tasks.py` (第1220-1230行)
-**服务**: `spx-knowledge-backend/app/services/document_toc_service.py` (第21-67行)
+**位置**: `multikb-knowledge-backend/app/tasks/document_tasks.py` (第1220-1230行)
+**服务**: `multikb-knowledge-backend/app/services/document_toc_service.py` (第21-67行)
 
 **流程**:
 1. **从 MinIO 下载 PDF**:
@@ -305,7 +305,7 @@ toc_item = {
 
 ### 5. 图片处理阶段
 
-**位置**: `spx-knowledge-backend/app/tasks/document_tasks.py` (第973-1198行)
+**位置**: `multikb-knowledge-backend/app/tasks/document_tasks.py` (第973-1198行)
 
 **流程**:
 1. **图片持久化**:
@@ -366,7 +366,7 @@ for img in images_meta:
 
 ### 6. 向量化阶段
 
-**位置**: `spx-knowledge-backend/app/tasks/document_tasks.py` (第1205-1459行)
+**位置**: `multikb-knowledge-backend/app/tasks/document_tasks.py` (第1205-1459行)
 
 **流程**:
 1. **读取分块内容**:
@@ -408,7 +408,7 @@ chunk_doc = {
 
 ### 7. 索引建立阶段
 
-**位置**: `spx-knowledge-backend/app/tasks/document_tasks.py` (第1460-1500行)
+**位置**: `multikb-knowledge-backend/app/tasks/document_tasks.py` (第1460-1500行)
 
 **流程**:
 1. **批量写入 OpenSearch**:

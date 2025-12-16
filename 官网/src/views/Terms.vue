@@ -25,7 +25,7 @@
           <!-- Introduction -->
           <div class="mb-12">
             <p class="text-lg text-gray-700 dark:text-gray-300 leading-relaxed">
-              欢迎使用 Knowledge Base 服务。使用我们的服务即表示您同意遵守以下服务条款。请仔细阅读本条款。
+              欢迎使用 Multikb Base 服务。使用我们的服务即表示您同意遵守以下服务条款。请仔细阅读本条款。
             </p>
           </div>
 
@@ -33,7 +33,7 @@
           <div class="mb-12">
             <h2 class="text-3xl font-bold text-gray-900 dark:text-gray-100 mb-4">接受条款</h2>
             <p class="text-lg text-gray-700 dark:text-gray-300 leading-relaxed">
-              通过访问或使用 Knowledge Base 服务，您表示同意受本服务条款的约束。如果您不同意这些条款，请不要使用我们的服务。
+              通过访问或使用 Multikb Base 服务，您表示同意受本服务条款的约束。如果您不同意这些条款，请不要使用我们的服务。
             </p>
           </div>
 
@@ -41,7 +41,7 @@
           <div class="mb-12">
             <h2 class="text-3xl font-bold text-gray-900 dark:text-gray-100 mb-4">服务描述</h2>
             <p class="text-lg text-gray-700 dark:text-gray-300 leading-relaxed mb-4">
-              Knowledge Base 是一个企业级知识库管理平台，提供以下服务：
+              Multikb Base 是一个企业级知识库管理平台，提供以下服务：
             </p>
             <ul class="list-disc list-inside space-y-2 text-gray-700 dark:text-gray-300">
               <li>文档管理和存储</li>
@@ -74,7 +74,7 @@
             <h2 class="text-3xl font-bold text-gray-900 dark:text-gray-100 mb-4">知识产权</h2>
             <h3 class="text-2xl font-semibold text-gray-900 dark:text-gray-100 mb-3 mt-6">服务知识产权</h3>
             <p class="text-lg text-gray-700 dark:text-gray-300 leading-relaxed mb-4">
-              Knowledge Base 服务及其所有内容（包括但不限于软件、代码、设计、商标、标识）的知识产权归我们所有，受相关法律法规保护。
+              Multikb Base 服务及其所有内容（包括但不限于软件、代码、设计、商标、标识）的知识产权归我们所有，受相关法律法规保护。
             </p>
             <h3 class="text-2xl font-semibold text-gray-900 dark:text-gray-100 mb-3 mt-6">用户内容</h3>
             <p class="text-lg text-gray-700 dark:text-gray-300 leading-relaxed">

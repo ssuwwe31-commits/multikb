@@ -1,5 +1,5 @@
 # 只忽略这两个目录，其他代码都需要同步
-spx-knowledge-backend/models/
+multikb-knowledge-backend/models/
 docs/models/
 # Python
 __pycache__/

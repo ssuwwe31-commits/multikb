@@ -97,7 +97,7 @@
         <div class="space-y-4">
           <div>
             <h3 class="text-lg font-bold text-gray-900 mb-2">环境变量</h3>
-            <code class="block bg-gray-900 text-green-400 px-4 py-3 rounded-lg font-mono text-sm">MINIO_ENDPOINT=localhost:9000<br>MINIO_ROOT_USER=minioadmin<br>MINIO_ROOT_PASSWORD=minioadmin<br>MINIO_BUCKET_NAME=spx-knowledge-base<br>MINIO_SECURE=false</code>
+            <code class="block bg-gray-900 text-green-400 px-4 py-3 rounded-lg font-mono text-sm">MINIO_ENDPOINT=localhost:9000<br>MINIO_ROOT_USER=minioadmin<br>MINIO_ROOT_PASSWORD=minioadmin<br>MINIO_BUCKET_NAME=multikb-knowledge-base<br>MINIO_SECURE=false</code>
           </div>
           <div>
             <h3 class="text-lg font-bold text-gray-900 mb-2">存储配置</h3>

@@ -81,7 +81,7 @@
 
 ```bash
 # 克隆项目
-git clone https://github.com/your-repo/knowledge-base.git
+git clone https://github.com/ssuwwe31-commits/multikb.git
 
 # 启动服务
 cd knowledge-base
@@ -92,7 +92,7 @@ docker-compose up -d
 
 ## 获取开源版
 
-- [GitHub](https://github.com/your-repo)
+- [GitHub](https://github.com/ssuwwe31-commits/multikb)
 - [Gitee](https://gitee.com/your-repo)
 - [下载](/download/)
 

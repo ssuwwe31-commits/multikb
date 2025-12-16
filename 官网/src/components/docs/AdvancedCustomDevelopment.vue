@@ -15,7 +15,7 @@
         <div class="space-y-4">
           <div>
             <h3 class="text-lg font-bold text-gray-900 mb-2">插件架构</h3>
-            <p class="text-sm text-gray-700 mb-3">Knowledge Base 支持插件机制，可以扩展系统功能：</p>
+            <p class="text-sm text-gray-700 mb-3">Multikb Base 支持插件机制，可以扩展系统功能：</p>
             <ul class="list-disc list-inside space-y-1 text-sm text-gray-700 ml-4">
               <li>文档处理插件（自定义解析器）</li>
               <li>检索插件（自定义检索策略）</li>
@@ -138,7 +138,7 @@ async def custom_endpoint():
       <h3 class="text-xl font-bold text-gray-900 mb-4">相关资源</h3>
       <div class="flex flex-wrap gap-3">
         <router-link to="/docs/api-overview" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">API概览 →</router-link>
-        <a href="https://github.com" target="_blank" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors">GitHub仓库 →</a>
+        <a href="https://github.com/ssuwwe31-commits/multikb" target="_blank" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors">GitHub仓库 →</a>
       </div>
     </div>
   </div>

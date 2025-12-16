@@ -241,7 +241,7 @@
             联系我们
           </router-link>
           <a 
-            href="https://github.com" 
+            href="https://github.com/ssuwwe31-commits/multikb" 
             target="_blank"
             class="px-8 py-4 bg-transparent border-2 border-white text-white rounded-xl font-semibold hover:bg-white/10 transition-all duration-300"
           >

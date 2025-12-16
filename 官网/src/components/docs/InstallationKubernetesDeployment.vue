@@ -43,22 +43,22 @@
 
         <div class="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-6 border-2 border-blue-100">
           <h3 class="text-xl font-bold text-gray-900 mb-4">2. 创建命名空间</h3>
-          <code class="block bg-gray-900 text-green-400 px-4 py-3 rounded-lg font-mono text-sm">kubectl create namespace spx-knowledge</code>
+          <code class="block bg-gray-900 text-green-400 px-4 py-3 rounded-lg font-mono text-sm">kubectl create namespace multikb-knowledge</code>
         </div>
 
         <div class="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-6 border-2 border-purple-100">
           <h3 class="text-xl font-bold text-gray-900 mb-4">3. 创建Secret</h3>
-          <code class="block bg-gray-900 text-green-400 px-4 py-3 rounded-lg font-mono text-sm">kubectl create secret generic spx-secrets \<br>&nbsp;&nbsp;--from-literal=mysql-password=your-password \<br>&nbsp;&nbsp;--from-literal=redis-password=your-password \<br>&nbsp;&nbsp;-n spx-knowledge</code>
+          <code class="block bg-gray-900 text-green-400 px-4 py-3 rounded-lg font-mono text-sm">kubectl create secret generic multikb-secrets \<br>&nbsp;&nbsp;--from-literal=mysql-password=your-password \<br>&nbsp;&nbsp;--from-literal=redis-password=your-password \<br>&nbsp;&nbsp;-n multikb-knowledge</code>
         </div>
 
         <div class="bg-gradient-to-br from-orange-50 to-red-50 rounded-xl p-6 border-2 border-orange-100">
           <h3 class="text-xl font-bold text-gray-900 mb-4">4. 部署应用</h3>
-          <code class="block bg-gray-900 text-green-400 px-4 py-3 rounded-lg font-mono text-sm">kubectl apply -f k8s/ -n spx-knowledge</code>
+          <code class="block bg-gray-900 text-green-400 px-4 py-3 rounded-lg font-mono text-sm">kubectl apply -f k8s/ -n multikb-knowledge</code>
         </div>
 
         <div class="bg-gradient-to-br from-yellow-50 to-amber-50 rounded-xl p-6 border-2 border-yellow-100">
           <h3 class="text-xl font-bold text-gray-900 mb-4">5. 检查部署状态</h3>
-          <code class="block bg-gray-900 text-green-400 px-4 py-3 rounded-lg font-mono text-sm">kubectl get pods -n spx-knowledge<br>kubectl get svc -n spx-knowledge<br>kubectl logs -f deployment/spx-backend -n spx-knowledge</code>
+          <code class="block bg-gray-900 text-green-400 px-4 py-3 rounded-lg font-mono text-sm">kubectl get pods -n multikb-knowledge<br>kubectl get svc -n multikb-knowledge<br>kubectl logs -f deployment/multikb-backend -n multikb-knowledge</code>
         </div>
       </div>
     </section>
@@ -111,7 +111,7 @@
         <div class="space-y-3">
           <div>
             <h4 class="font-semibold text-gray-900 mb-1">手动扩缩容</h4>
-            <code class="block bg-gray-900 text-green-400 px-4 py-2 rounded-lg font-mono text-sm">kubectl scale deployment spx-backend --replicas=3 -n spx-knowledge</code>
+            <code class="block bg-gray-900 text-green-400 px-4 py-2 rounded-lg font-mono text-sm">kubectl scale deployment multikb-backend --replicas=3 -n multikb-knowledge</code>
           </div>
           <div>
             <h4 class="font-semibold text-gray-900 mb-1">自动扩缩容（HPA）</h4>

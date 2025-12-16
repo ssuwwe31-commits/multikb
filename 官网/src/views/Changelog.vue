@@ -12,7 +12,7 @@
             </span>
           </h1>
           <p class="text-xl text-gray-600 dark:text-gray-300">
-            了解 Knowledge Base 的最新功能和改进
+            了解 Multikb Base 的最新功能和改进
           </p>
         </div>
       </div>
@@ -184,7 +184,7 @@
               查看完整的更新历史和源代码
             </p>
             <a 
-              href="https://github.com" 
+              href="https://github.com/ssuwwe31-commits/multikb" 
               target="_blank"
               class="inline-flex items-center space-x-2 px-6 py-3 bg-gray-900 dark:bg-gray-800 text-white rounded-lg font-semibold hover:bg-gray-800 dark:hover:bg-gray-700 transition-all duration-300"
             >

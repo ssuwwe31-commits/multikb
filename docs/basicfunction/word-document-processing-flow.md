@@ -18,7 +18,7 @@ Word 文档处理流程分为以下几个主要阶段：
 
 ### 1. 文档下载阶段
 
-**位置**: `spx-knowledge-backend/app/tasks/document_tasks.py` (第73-98行)
+**位置**: `multikb-knowledge-backend/app/tasks/document_tasks.py` (第73-98行)
 
 **流程**:
 - 从 MinIO 下载文档文件到临时目录
@@ -35,8 +35,8 @@ file_content = minio_service.download_file(document.file_path)
 
 ### 2. 文档解析阶段
 
-**位置**: `spx-knowledge-backend/app/tasks/document_tasks.py` (第105-144行)
-**服务**: `spx-knowledge-backend/app/services/docx_service.py` (第241-710行)
+**位置**: `multikb-knowledge-backend/app/tasks/document_tasks.py` (第105-144行)
+**服务**: `multikb-knowledge-backend/app/services/docx_service.py` (第241-710行)
 
 **流程**:
 1. **DOCX 降噪处理**（可选）:
@@ -80,8 +80,8 @@ parse_result = {
 
 ### 3. 文档分块阶段
 
-**位置**: `spx-knowledge-backend/app/tasks/document_tasks.py` (第217-415行)
-**服务**: `spx-knowledge-backend/app/services/docx_service.py` (第539-709行)
+**位置**: `multikb-knowledge-backend/app/tasks/document_tasks.py` (第217-415行)
+**服务**: `multikb-knowledge-backend/app/services/docx_service.py` (第539-709行)
 
 **流程**:
 
@@ -153,8 +153,8 @@ chunk_meta = {
 
 ### 4. 目录提取阶段
 
-**位置**: `spx-knowledge-backend/app/tasks/document_tasks.py` (第1220-1230行)
-**服务**: `spx-knowledge-backend/app/services/document_toc_service.py`
+**位置**: `multikb-knowledge-backend/app/tasks/document_tasks.py` (第1220-1230行)
+**服务**: `multikb-knowledge-backend/app/services/document_toc_service.py`
 
 **流程**:
 1. **PDF 目录提取**:
@@ -177,7 +177,7 @@ chunk_meta = {
 
 ### 5. 图片处理阶段
 
-**位置**: `spx-knowledge-backend/app/tasks/document_tasks.py` (第973-1198行)
+**位置**: `multikb-knowledge-backend/app/tasks/document_tasks.py` (第973-1198行)
 
 **流程**:
 1. **图片持久化**:
@@ -219,7 +219,7 @@ if element_index is not None:
 
 ### 6. 向量化阶段
 
-**位置**: `spx-knowledge-backend/app/tasks/document_tasks.py` (第1205-1459行)
+**位置**: `multikb-knowledge-backend/app/tasks/document_tasks.py` (第1205-1459行)
 
 **流程**:
 1. **读取分块内容**:
@@ -262,7 +262,7 @@ chunk_doc = {
 
 ### 7. 索引建立阶段
 
-**位置**: `spx-knowledge-backend/app/tasks/document_tasks.py` (第1460-1500行)
+**位置**: `multikb-knowledge-backend/app/tasks/document_tasks.py` (第1460-1500行)
 
 **流程**:
 1. **批量写入 OpenSearch**:

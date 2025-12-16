@@ -77,7 +77,7 @@
 
 ## 📞 获取帮助
 
-- [GitHub Issues](https://github.com/your-repo/issues)
+- [GitHub Issues](https://github.com/ssuwwe31-commits/multikb/issues)
 - [社区论坛](https://community.example.com)
 - [技术支持](./contact.md)
 

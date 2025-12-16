@@ -21,7 +21,7 @@
 
       <div class="space-y-4">
         <div class="bg-gradient-to-br from-blue-50 to-purple-50 rounded-xl p-6 border-2 border-blue-100">
-          <h3 class="text-xl font-bold text-gray-900 mb-3">Q: 如何快速部署 Knowledge Base？</h3>
+          <h3 class="text-xl font-bold text-gray-900 mb-3">Q: 如何快速部署 Multikb Base？</h3>
           <div class="text-gray-700 space-y-2">
             <p><strong>A:</strong> 推荐使用 Docker Compose 一键部署：</p>
             <ol class="list-decimal list-inside space-y-2 ml-4">
@@ -163,7 +163,7 @@
         <div class="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-6 border-2 border-purple-100">
           <h3 class="text-xl font-bold text-gray-900 mb-3">Q: 支持哪些文档格式？</h3>
           <div class="text-gray-700 space-y-2">
-            <p><strong>A:</strong> Knowledge Base 支持以下9种文档格式：</p>
+            <p><strong>A:</strong> Multikb Base 支持以下9种文档格式：</p>
             <div class="grid md:grid-cols-3 gap-2 mt-3">
               <div class="bg-white p-3 rounded-lg border border-gray-200">📄 PDF</div>
               <div class="bg-white p-3 rounded-lg border border-gray-200">📝 DOCX</div>
@@ -181,7 +181,7 @@
         <div class="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-6 border-2 border-purple-100">
           <h3 class="text-xl font-bold text-gray-900 mb-3">Q: 如何管理文档版本？</h3>
           <div class="text-gray-700 space-y-2">
-            <p><strong>A:</strong> Knowledge Base 提供双层版本管理：</p>
+            <p><strong>A:</strong> Multikb Base 提供双层版本管理：</p>
             <ul class="list-disc list-inside space-y-1 ml-4">
               <li><strong>文档级版本</strong>：记录整个文档的修改历史，支持版本恢复和对比</li>
               <li><strong>块级版本</strong>：对每个知识块进行细粒度版本控制</li>

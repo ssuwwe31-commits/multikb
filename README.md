@@ -76,12 +76,12 @@
   - Ollama（或等价大模型服务）
   - NebulaGraph 3.x+（可选，知识图谱功能需要）
 
-## 后端部署（`spx-knowledge-backend`）
+## 后端部署（`multikb-knowledge-backend`）
 
 1. **代码准备**
    ```bash
    git clone <repo-url>
-   cd spx-knowledge-backend
+   cd multikb-knowledge-backend
    ```
 2. **创建虚拟环境并安装依赖**
    ```bash
@@ -108,11 +108,11 @@
    - 访问 `http://localhost:8000/docs` 查看 OpenAPI
    - 测试图片代理、问答流式输出等关键接口
 
-## 前端部署（`spx-knowledge-frontend`）
+## 前端部署（`multikb-knowledge-frontend`）
 
 1. **依赖安装**
    ```bash
-   cd spx-knowledge-frontend
+   cd multikb-knowledge-frontend
    npm install
    ```
 2. **环境变量配置**
@@ -199,8 +199,8 @@
   - `目录设计/*.md`：前后端目录结构解析
   - `表设计/*.md`：MySQL、OpenSearch、Redis、MinIO、NebulaGraph 结构设计
   - `图片处理流程说明.md`、`Unstructured服务使用说明.md` 等专项说明
-- `spx-knowledge-backend/` —— 后端源码与配置文件
-- `spx-knowledge-frontend/` —— 前端源码与工程化配置
+- `multikb-knowledge-backend/` —— 后端源码与配置文件
+- `multikb-knowledge-frontend/` —— 前端源码与工程化配置
 
 > 本 README 已整合原前后端 README 与设计文档信息，通过单一文档即可完成项目认知、部署、运维与扩展规划。知识图谱功能为企业版核心能力，提供完整的实体提取、关系识别、图谱可视化与查询能力。
 

@@ -37,7 +37,7 @@
             <li>• 查看已知问题</li>
           </ul>
           <a 
-            href="https://github.com" 
+            href="https://github.com/ssuwwe31-commits/multikb" 
             target="_blank"
             class="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
           >

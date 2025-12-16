@@ -41,7 +41,7 @@
       <div class="space-y-4">
         <div class="bg-gradient-to-br from-green-50 to-teal-50 rounded-xl p-6 border-2 border-green-100">
           <h3 class="text-xl font-bold text-gray-900 mb-4">1. 克隆代码</h3>
-          <code class="block bg-gray-900 text-green-400 px-4 py-3 rounded-lg font-mono text-sm">git clone &lt;repository-url&gt;<br>cd spx-knowledge-backend</code>
+          <code class="block bg-gray-900 text-green-400 px-4 py-3 rounded-lg font-mono text-sm">git clone &lt;repository-url&gt;<br>cd multikb-knowledge-backend</code>
         </div>
 
         <div class="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-6 border-2 border-blue-100">

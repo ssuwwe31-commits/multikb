@@ -33,7 +33,7 @@
 
 **方式1**：使用Python脚本
 ```bash
-cd f:\spxknowlage\spx-knowledge-backend
+cd f:\spxknowlage\multikb-knowledge-backend
 python migrate_entity_types.py
 ```
 

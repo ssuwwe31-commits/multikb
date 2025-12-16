@@ -6,7 +6,7 @@
         系统要求
       </h1>
       <p class="text-xl text-gray-600">
-        查看 Knowledge Base 的系统要求、依赖服务和环境配置
+        查看 Multikb Base 的系统要求、依赖服务和环境配置
       </p>
     </div>
 

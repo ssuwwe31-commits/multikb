@@ -49,7 +49,7 @@ export default defineConfig({
     
     // 社交链接
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/your-repo' },
+      { icon: 'github', link: 'https://github.com/ssuwwe31-commits/multikb' },
       { icon: 'gitee', link: 'https://gitee.com/your-repo' }
     ],
     
@@ -76,7 +76,7 @@ export default defineConfig({
     
     // 编辑链接
     editLink: {
-      pattern: 'https://github.com/your-repo/edit/main/官网/:path',
+      pattern: 'https://github.com/ssuwwe31-commits/multikb/edit/main/官网/:path',
       text: '在 GitHub 上编辑此页'
     },
     

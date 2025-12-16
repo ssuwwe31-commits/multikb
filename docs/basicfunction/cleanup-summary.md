@@ -41,7 +41,7 @@
 
 ### 执行迁移
 ```bash
-cd f:\spxknowlage\spx-knowledge-backend
+cd f:\spxknowlage\multikb-knowledge-backend
 python scripts/run_migrations.py
 ```
 

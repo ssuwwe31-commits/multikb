@@ -5,7 +5,7 @@
         5分钟快速开始
       </h1>
       <p class="text-xl text-gray-600">
-        快速上手 Knowledge Base，体验核心功能
+        快速上手 Multikb Base，体验核心功能
       </p>
     </div>
 

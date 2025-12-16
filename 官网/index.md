@@ -2,12 +2,12 @@
 layout: home
 
 hero:
-  name: "Knowledge Base"
+  name: "Multikb Base"
   text: "企业级知识库管理平台"
   tagline: 唯一集成ClamAV安全扫描、支持9种文档格式、完整多模态能力
   image:
     src: /logo.png
-    alt: Knowledge Base
+    alt: Multikb Base
   actions:
     - theme: brand
       text: 快速开始
@@ -17,7 +17,7 @@ hero:
       link: /docs/
     - theme: alt
       text: GitHub
-      link: https://github.com/your-repo
+      link: https://github.com/ssuwwe31-commits/multikb
 
 features:
   - icon: 🔒
@@ -115,7 +115,7 @@ features:
 
 ```bash
 # 克隆项目
-git clone https://github.com/your-repo/knowledge-base.git
+git clone https://github.com/ssuwwe31-commits/multikb.git
 
 # 启动服务
 cd knowledge-base
@@ -133,7 +133,7 @@ docker-compose up -d
 
 ## 社区
 
-- [GitHub](https://github.com/your-repo)
+- [GitHub](https://github.com/ssuwwe31-commits/multikb)
 - [Gitee](https://gitee.com/your-repo)
 - [文档](/docs/)
 - [博客](/blog/)
@@ -141,7 +141,7 @@ docker-compose up -d
 ---
 
 <div style="text-align: center; margin-top: 60px;">
-  <p>开始使用 Knowledge Base，构建您的企业知识库</p>
+  <p>开始使用 Multikb Base，构建您的企业知识库</p>
   <a href="/docs/getting-started" style="display: inline-block; margin-top: 20px; padding: 12px 24px; background: #646cff; color: white; text-decoration: none; border-radius: 4px;">立即开始</a>
 </div>
 
