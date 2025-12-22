@@ -1,0 +1,18 @@
+version: '3'
+services:
+  backendserver:
+    image: multiai/knowledge:base
+    container_name: multikb-knowledge-backend
+    ports:
+      - "8081:8000"
+    volumes:
+      - ./multikb-knowledge-backend:/opt/multikb-knowledge-backend
+    command: ["python","/opt/multikb-knowledge-backend/app.py"]
+
+  spxworker:
+    image: multiai/knowledge:base
+    container_name: multiaikb-knowledge-worker
+    volumes:
+      - ./multikb-knowledge-backend:/opt/multikb-knowledge-backend 
+    command: ["python","/opt/multikb-knowledge-backend/celery_worker/app.py"]
+

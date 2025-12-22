@@ -66,10 +66,10 @@
 ## 部署准备
 
 - **通用要求**
-  - 操作系统：Linux / Windows Server / macOS（推荐 Linux 服务器）
-  - 基础工具：Git、Python 3.9+、Node.js 16+、npm 7+（或 yarn 1.22+）、可选 Docker & Docker Compose
+  - 操作系统：Linux / Windows Server（推荐 Linux 服务器）
+  - 基础工具：Git、Python 3.11、Node.js 16+、npm 7+（或 yarn 1.22+）、可选 Docker & Docker Compose
 - **后端依赖服务**
-  - MySQL 8.0+
+  - MySQL 5.7+
   - OpenSearch 2.x（需安装 IK 插件）
   - Redis 6+
   - MinIO 最新版本
@@ -80,56 +80,68 @@
 
 1. **代码准备**
    ```bash
-   git clone <repo-url>
+   git clone https://github.com/ssuwwe31-commits/multikb.git
    cd multikb-knowledge-backend
    ```
-2. **创建虚拟环境并安装依赖**
+
+2. **启动服务**
+2.1  **启动中间服务**
    ```bash
-   python -m venv venv
-   source venv/bin/activate  # Windows 使用 venv\Scripts\activate
-   pip install -r requirements/base.txt
+   # 中间件 包括OpenSearch、Redis、MinIO、Ollama、NebulaGraph等服务 除了前后端服务
+   docker compose -f docker-compose-middleware.yaml
    ```
-3. **配置环境变量**
+2.2  **配置环境变量**
    ```bash
    cp env.example .env
    # 修改数据库、OpenSearch、Redis、MinIO、Ollama、NebulaGraph 等连接参数
    # 知识图谱功能需要配置 NEBULA_HOSTS、NEBULA_USER、NEBULA_PASSWORD
    ```
-4. **初始化数据库（可选）**
+2.3 **初始化数据库**
    ```bash
    mysql -u <user> -p <database_name < init.sql
    ```
-5. **启动服务**
+2.4 **启动后端服务**
    ```bash
-   uvicorn app.main:app --reload         # 生产可选 gunicorn/uvicorn + supervisor
-   celery -A app.tasks.celery_app worker --loglevel=info
+   # 后端服务包括backend和celery两个服务
+   # 启动后端服务
+   docker compose -f docker-compose-backend.yaml
    ```
-6. **验证**
+2.5 **启动前端服务**
+   ```bash
+   # 进入前端代码目录 执行 脚本即可 注意后端服务地址需要配置
+   # 以下地址为后端服务默认地址 需要改成你的地址
+   # BACKEND_API_URL=${1:-${BACKEND_API_URL:-http://192.168.131.158:8081}} 
+   cd multikb-knowledge-frontend/
+   bash deploy.sh
+   ```
+2.6 **其他服务(可选)**
+   ```bash
+   # 还需要依赖clamAV
+   apt-get update
+   apt-get install clamav
+   ```
+
+3. **验证**
    - 访问 `http://localhost:8000/docs` 查看 OpenAPI
    - 测试图片代理、问答流式输出等关键接口
 
-## 前端部署（`multikb-knowledge-frontend`）
+## 前端说明（`multikb-knowledge-frontend`）
 
-1. **依赖安装**
-   ```bash
-   cd multikb-knowledge-frontend
-   npm install
-   ```
-2. **环境变量配置**
+1. **环境变量配置**
    ```bash
    cp .env.example .env
    # 设置 VITE_API_BASE_URL 与 VITE_WS_BASE_URL 指向后端服务
    ```
-3. **开发调试**
+2. **开发调试**
    ```bash
    npm run dev        # 默认端口 http://localhost:5173
    ```
-4. **构建与预览**
+3. **构建与预览**
    ```bash
    npm run build
    npm run preview    # 可选，本地预览打包结果
    ```
-5. **上线部署**
+4. **上线部署**
    - 将 `dist/` 目录托管至 Nginx/静态服务器/CDN
    - 配置反向代理，保证 API 与 WebSocket 同源访问
 
@@ -141,66 +153,3 @@
 - **性能调优**：合理设置 OpenSearch 索引分片、副本与 k-NN 参数，调整向量维度与召回阈值提升问答准确率；优化 NebulaGraph Space 的 partition_num 和 replica_factor 提升图谱查询性能。
 - **知识图谱运维**：定期检查 NebulaGraph 同步状态，监控实体/关系数量，清理无效数据；根据知识库规模调整 Space 配置。
 - **功能扩展**：基于现有接口与组件，可快速迭代多租户、权限审计、协作编辑、系统监控、图谱推理查询等高级能力。
-
-## 知识图谱功能详解
-
-### 核心能力
-
-1. **实体提取**
-   - **三种提取模式**：
-     - `system`：使用系统预定义的实体类型（如：人物、地点、概念等）
-     - `user`：使用用户自定义创建的实体类型（支持一级、二级、三级分类）
-     - `model`：模型自由提取，不限制类型，根据文档内容自动定义类型
-   - **智能过滤**：支持指定实体类型代码列表，只提取选中类型的实体
-   - **置信度评估**：每个实体附带置信度分数，支持高/中/低置信度阈值配置
-
-2. **关系识别**
-   - 自动识别实体间关系（属于、引用、依赖、对比、实现、相关、部分、包含等）
-   - 关系验证：确保关系的源实体和目标实体都在实体列表中
-   - 关系置信度：支持关系级别的置信度评估
-
-3. **图谱可视化**
-   - **多种布局**：力导向布局、层次布局、圆形布局、自定义层次布局
-   - **交互功能**：节点拖动（标签跟随）、缩放、平移、高亮、详情查看
-   - **筛选功能**：按实体类型、知识库、关键词筛选
-   - **实时更新**：支持提取任务完成后自动刷新图谱
-
-4. **数据存储**
-   - **双写机制**：MySQL 存储结构化数据，NebulaGraph 存储图数据
-   - **增量同步**：支持异步同步到 NebulaGraph，错误自动重试
-   - **数据隔离**：每个知识库对应一个 NebulaGraph Space（`kb_{knowledge_base_id}`）
-
-5. **实体类型管理**
-   - **层级分类**：支持一级、二级、三级分类层级
-   - **类型区分**：系统类型（`is_system=True`）与用户类型（`is_system=False`）
-   - **知识库配置**：支持为每个知识库配置可用的实体类型
-   - **回退机制**：知识库未配置类型时，自动回退到全局类型
-
-### 技术实现
-
-- **后端**：
-  - `EntityExtractionService`：LLM 实体/关系提取服务
-  - `GraphStorageService`：NebulaGraph 存储抽象层
-  - `KnowledgeGraphService`：知识图谱业务逻辑服务
-  - `EntityTypeService`：实体类型管理服务
-  - Celery 异步任务：`extract_entities_from_document_task`
-
-- **前端**：
-  - ECharts Graph/Tree 图表组件
-  - 图谱可视化页面：`src/views/KnowledgeGraph/index.vue`
-  - 实体类型选择器：支持多选、搜索、层级展示
-  - 提取任务管理：任务列表、状态监控、重新生成
-
-## 参考资料
-
-- `RAGDOCS/` —— 项目正式文档，包括：
-  - `项目完整报告.md`：接口统计、对齐验证、修复记录
-  - `功能设计/*.md`：问答流程、文档处理、图片检索、知识图谱设计
-  - `目录设计/*.md`：前后端目录结构解析
-  - `表设计/*.md`：MySQL、OpenSearch、Redis、MinIO、NebulaGraph 结构设计
-  - `图片处理流程说明.md`、`Unstructured服务使用说明.md` 等专项说明
-- `multikb-knowledge-backend/` —— 后端源码与配置文件
-- `multikb-knowledge-frontend/` —— 前端源码与工程化配置
-
-> 本 README 已整合原前后端 README 与设计文档信息，通过单一文档即可完成项目认知、部署、运维与扩展规划。知识图谱功能为企业版核心能力，提供完整的实体提取、关系识别、图谱可视化与查询能力。
-

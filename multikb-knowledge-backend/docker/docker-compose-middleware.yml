@@ -1,0 +1,503 @@
+# version: '3.8'  # Docker Compose v2 不再需要 version 字段
+
+services:
+  # ============================================
+  # MySQL 数据库服务
+  # ============================================
+  mysql:
+    image: mysql:5.7
+    container_name: spx-knowledge-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-spx_knowledge}
+      MYSQL_USER: ${MYSQL_USER:-user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-password}
+      TZ: Asia/Shanghai
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    networks:
+      - spx-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-password}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
+  # MinIO 对象存储服务
+  # ============================================
+  minio:
+    image: minio/minio:latest
+    container_name: spx-knowledge-minio
+    restart: always
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_REGION_NAME: ${MINIO_REGION_NAME:-us-east-1}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - spx-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # ============================================
+  # Redis 缓存服务
+  # ============================================
+  redis:
+    image: redis:6-alpine
+    container_name: spx-knowledge-redis
+    restart: always
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - spx-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
+  # OpenSearch 搜索引擎服务
+  # ============================================
+  opensearch:
+    image: opensearchproject/opensearch:2.11.0
+    container_name: spx-knowledge-opensearch
+    restart: always
+    environment:
+      - discovery.type=single-node
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+      - bootstrap.memory_lock=true
+      - "DISABLE_INSTALL_DEMO_CONFIG=true"
+      - "DISABLE_SECURITY_PLUGIN=true"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+    ports:
+      - "${OPENSEARCH_PORT:-9200}:9200"
+      - "${OPENSEARCH_TRANSPORT_PORT:-9300}:9300"
+    networks:
+      - spx-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    # 注意: IK插件需要在容器启动后手动安装
+    # 执行命令: bin/opensearch-plugin install -b https://github.com/medcl/elasticsearch-analysis-ik/releases/download/v8.11.0/elasticsearch-analysis-ik-8.11.0.zip
+
+  # ============================================
+  # OpenSearch Dashboards (可选)
+  # ============================================
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:2.11.0
+    container_name: spx-knowledge-opensearch-dashboards
+    restart: always
+    environment:
+      - 'OPENSEARCH_HOSTS=["http://opensearch:9200"]'
+      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
+    ports:
+      - "${OPENSEARCH_DASHBOARDS_PORT:-5601}:5601"
+    volumes:
+      - opensearch_dashboards_data:/usr/share/opensearch-dashboards/data
+    depends_on:
+      - opensearch
+    networks:
+      - spx-network
+
+  # ============================================
+  # NebulaGraph 图数据库服务
+  # ============================================
+  metad0:
+    image: docker.io/vesoft/nebula-metad:v3.8.0
+    container_name: nebula-metad0
+    environment:
+      USER: root
+      TZ: "${TZ:-Asia/Shanghai}"
+    command:
+      - --meta_server_addrs=metad0:9559,metad1:9559,metad2:9559
+      - --local_ip=metad0
+      - --ws_ip=metad0
+      - --port=9559
+      - --ws_http_port=19559
+      - --data_path=/data/meta
+      - --log_dir=/logs
+      - --v=0
+      - --minloglevel=0
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://metad0:19559/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    ports:
+      - 9559
+      - 19559
+      - 19560
+    volumes:
+      - ./data/meta0:/data/meta
+      - ./logs/meta0:/logs
+    networks:
+      - spx-network
+    restart: on-failure
+    cap_add:
+      - SYS_PTRACE
+
+  metad1:
+    image: docker.io/vesoft/nebula-metad:v3.8.0
+    container_name: nebula-metad1
+    environment:
+      USER: root
+      TZ: "${TZ:-Asia/Shanghai}"
+    command:
+      - --meta_server_addrs=metad0:9559,metad1:9559,metad2:9559
+      - --local_ip=metad1
+      - --ws_ip=metad1
+      - --port=9559
+      - --ws_http_port=19559
+      - --data_path=/data/meta
+      - --log_dir=/logs
+      - --v=0
+      - --minloglevel=0
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://metad1:19559/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    ports:
+      - 9559
+      - 19559
+      - 19560
+    volumes:
+      - ./data/meta1:/data/meta
+      - ./logs/meta1:/logs
+    networks:
+      - spx-network
+    restart: on-failure
+    cap_add:
+      - SYS_PTRACE
+
+  metad2:
+    image: docker.io/vesoft/nebula-metad:v3.8.0
+    container_name: nebula-metad2
+    environment:
+      USER: root
+      TZ: "${TZ:-Asia/Shanghai}"
+    command:
+      - --meta_server_addrs=metad0:9559,metad1:9559,metad2:9559
+      - --local_ip=metad2
+      - --ws_ip=metad2
+      - --port=9559
+      - --ws_http_port=19559
+      - --data_path=/data/meta
+      - --log_dir=/logs
+      - --v=0
+      - --minloglevel=0
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://metad2:19559/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    ports:
+      - 9559
+      - 19559
+      - 19560
+    volumes:
+      - ./data/meta2:/data/meta
+      - ./logs/meta2:/logs
+    networks:
+      - spx-network
+    restart: on-failure
+    cap_add:
+      - SYS_PTRACE
+
+  storaged0:
+    image: docker.io/vesoft/nebula-storaged:v3.8.0
+    container_name: nebula-storaged0
+    environment:
+      USER: root
+      TZ: "${TZ:-Asia/Shanghai}"
+    command:
+      - --meta_server_addrs=metad0:9559,metad1:9559,metad2:9559
+      - --local_ip=storaged0
+      - --ws_ip=storaged0
+      - --port=9779
+      - --ws_http_port=19779
+      - --data_path=/data/storage
+      - --log_dir=/logs
+      - --v=0
+      - --minloglevel=0
+    depends_on:
+      - metad0
+      - metad1
+      - metad2
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://storaged0:19779/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    ports:
+      - 9779
+      - 19779
+      - 19780
+    volumes:
+      - ./data/storage0:/data/storage
+      - ./logs/storage0:/logs
+    networks:
+      - spx-network
+    restart: on-failure
+    cap_add:
+      - SYS_PTRACE
+
+  storaged1:
+    image: docker.io/vesoft/nebula-storaged:v3.8.0
+    container_name: nebula-storaged1
+    environment:
+      USER: root
+      TZ: "${TZ:-Asia/Shanghai}"
+    command:
+      - --meta_server_addrs=metad0:9559,metad1:9559,metad2:9559
+      - --local_ip=storaged1
+      - --ws_ip=storaged1
+      - --port=9779
+      - --ws_http_port=19779
+      - --data_path=/data/storage
+      - --log_dir=/logs
+      - --v=0
+      - --minloglevel=0
+    depends_on:
+      - metad0
+      - metad1
+      - metad2
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://storaged1:19779/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    ports:
+      - 9779
+      - 19779
+      - 19780
+    volumes:
+      - ./data/storage1:/data/storage
+      - ./logs/storage1:/logs
+    networks:
+      - spx-network
+    restart: on-failure
+    cap_add:
+      - SYS_PTRACE
+
+  storaged2:
+    image: docker.io/vesoft/nebula-storaged:v3.8.0
+    container_name: nebula-storaged2
+    environment:
+      USER: root
+      TZ: "${TZ:-Asia/Shanghai}"
+    command:
+      - --meta_server_addrs=metad0:9559,metad1:9559,metad2:9559
+      - --local_ip=storaged2
+      - --ws_ip=storaged2
+      - --port=9779
+      - --ws_http_port=19779
+      - --data_path=/data/storage
+      - --log_dir=/logs
+      - --v=0
+      - --minloglevel=0
+    depends_on:
+      - metad0
+      - metad1
+      - metad2
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://storaged2:19779/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    ports:
+      - 9779
+      - 19779
+      - 19780
+    volumes:
+      - ./data/storage2:/data/storage
+      - ./logs/storage2:/logs
+    networks:
+      - spx-network
+    restart: on-failure
+    cap_add:
+      - SYS_PTRACE
+
+  graphd:
+    image: docker.io/vesoft/nebula-graphd:v3.8.0
+    container_name: nebula-graphd
+    environment:
+      USER: root
+      TZ: "${TZ:-Asia/Shanghai}"
+    command:
+      - --meta_server_addrs=metad0:9559,metad1:9559,metad2:9559
+      - --port=9669
+      - --local_ip=graphd
+      - --ws_ip=graphd
+      - --ws_http_port=19669
+      - --log_dir=/logs
+      - --v=0
+      - --minloglevel=0
+    depends_on:
+      - storaged0
+      - storaged1
+      - storaged2
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://graphd:19669/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    ports:
+      - "${NEBULA_GRAPH_PORT:-9669}:9669"
+      - 19669
+      - 19670
+    volumes:
+      - ./logs/graph:/logs
+    networks:
+      - spx-network
+    restart: on-failure
+    cap_add:
+      - SYS_PTRACE
+
+  graphd1:
+    image: docker.io/vesoft/nebula-graphd:v3.8.0
+    container_name: nebula-graphd1
+    environment:
+      USER: root
+      TZ: "${TZ:-Asia/Shanghai}"
+    command:
+      - --meta_server_addrs=metad0:9559,metad1:9559,metad2:9559
+      - --port=9669
+      - --local_ip=graphd1
+      - --ws_ip=graphd1
+      - --ws_http_port=19669
+      - --log_dir=/logs
+      - --v=0
+      - --minloglevel=0
+    depends_on:
+      - storaged0
+      - storaged1
+      - storaged2
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://graphd1:19669/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    ports:
+      - 9669
+      - 19669
+      - 19670
+    volumes:
+      - ./logs/graph1:/logs
+    networks:
+      - spx-network
+    restart: on-failure
+    cap_add:
+      - SYS_PTRACE
+
+  graphd2:
+    image: docker.io/vesoft/nebula-graphd:v3.8.0
+    container_name: nebula-graphd2
+    environment:
+      USER: root
+      TZ: "${TZ:-Asia/Shanghai}"
+    command:
+      - --meta_server_addrs=metad0:9559,metad1:9559,metad2:9559
+      - --port=9669
+      - --local_ip=graphd2
+      - --ws_ip=graphd2
+      - --ws_http_port=19669
+      - --log_dir=/logs
+      - --v=0
+      - --minloglevel=0
+    depends_on:
+      - storaged0
+      - storaged1
+      - storaged2
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://graphd2:19669/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    ports:
+      - 9669
+      - 19669
+      - 19670
+    volumes:
+      - ./logs/graph2:/logs
+    networks:
+      - spx-network
+    restart: on-failure
+    cap_add:
+      - SYS_PTRACE
+
+  nebula-console:
+    image: docker.io/vesoft/nebula-console:v3.6.0
+    container_name: nebula-console
+    entrypoint: ""
+    command:
+      - sh
+      - -c
+      - |
+        for i in `seq 1 60`;do
+          var=`nebula-console -addr graphd -port 9669 -u root -p nebula -e 'ADD HOSTS "storaged0":9779,"storaged1":9779,"storaged2":9779'`;
+          if [[ $$? == 0 ]];then
+            break;
+          fi;
+          sleep 1;
+          echo "retry to add hosts.";
+        done && tail -f /dev/null;
+    depends_on:
+      - graphd
+    networks:
+      - spx-network
+
+
+networks:
+  spx-network:
+    driver: bridge
+
+volumes:
+  mysql_data:
+    driver: local
+  minio_data:
+    driver: local
+  redis_data:
+    driver: local
+  opensearch_data:
+    driver: local
+  opensearch_dashboards_data:
+    driver: local
