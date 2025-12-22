@@ -1,6 +1,6 @@
 ## 项目总览
 
-- **项目名称**：SPX Knowledge Base（知识问答与知识库管理平台）
+- **项目名称**：Multikb Base（知识问答与知识库管理平台）
 - **核心价值**：提供从文档入库、内容治理、语义检索、多模态问答到图片搜索的端到端解决方案，兼顾企业级可靠性与开发者体验。
 - **整体架构**：后端基于 `FastAPI + Celery + SQLAlchemy`，前端基于 `Vue 3 + TypeScript + Vite`，底层依赖 MySQL、OpenSearch、Redis、MinIO、Ollama、NebulaGraph 等服务，支持 WebSocket 实时交互。
 - **项目状态**：完成主要开发，核心功能 100% 对齐设计文档，生产可用。
@@ -85,38 +85,43 @@
    ```
 
 2. **启动服务**
-2.1  **启动中间服务**
+
+   2.1 **启动中间服务**
    ```bash
-   # 中间件 包括OpenSearch、Redis、MinIO、Ollama、NebulaGraph等服务 除了前后端服务
-   docker compose -f docker-compose-middleware.yaml
+   # 中间件包括 OpenSearch、Redis、MinIO、Ollama、NebulaGraph 等服务，不包括前后端服务
+   docker compose -f docker/docker-compose-middleware.yml up -d
    ```
-2.2  **配置环境变量**
+
+   2.2 **配置环境变量**
    ```bash
    cp env.example .env
    # 修改数据库、OpenSearch、Redis、MinIO、Ollama、NebulaGraph 等连接参数
    # 知识图谱功能需要配置 NEBULA_HOSTS、NEBULA_USER、NEBULA_PASSWORD
    ```
-2.3 **初始化数据库**
+
+   2.3 **初始化数据库**
    ```bash
-   mysql -u <user> -p <database_name < init.sql
+   mysql -u <user> -p <database_name> < init.sql
    ```
-2.4 **启动后端服务**
+
+   2.4 **启动后端服务**
    ```bash
-   # 后端服务包括backend和celery两个服务
-   # 启动后端服务
-   docker compose -f docker-compose-backend.yaml
+   # 后端服务包括 backend 和 celery 两个服务
+   docker compose -f docker/docker-compose-backend.yaml up -d
    ```
-2.5 **启动前端服务**
+
+   2.5 **启动前端服务**
    ```bash
-   # 进入前端代码目录 执行 脚本即可 注意后端服务地址需要配置
-   # 以下地址为后端服务默认地址 需要改成你的地址
-   # BACKEND_API_URL=${1:-${BACKEND_API_URL:-http://192.168.131.158:8081}} 
-   cd multikb-knowledge-frontend/
+   # 进入前端代码目录执行脚本即可，注意后端服务地址需要配置
+   # 以下地址为后端服务默认地址，需要改成你的地址
+   # BACKEND_API_URL=${1:-${BACKEND_API_URL:-http://192.168.131.158:8081}}
+   cd ../multikb-knowledge-frontend/
    bash deploy.sh
    ```
-2.6 **其他服务(可选)**
+
+   2.6 **其他服务（可选）**
    ```bash
-   # 还需要依赖clamAV
+   # 还需要依赖 ClamAV
    apt-get update
    apt-get install clamav
    ```
