@@ -1,6 +1,6 @@
 # 只忽略这些目录，其他代码都需要同步
 multikb-knowledge-backend/models/
-docs/models/
+docs/
 官网/
 # Python
 __pycache__/
