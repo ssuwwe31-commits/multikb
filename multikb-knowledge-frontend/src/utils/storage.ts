@@ -1,8 +1,8 @@
-﻿/**
+/**
  * 本地存储工具
  */
 
-const PREFIX = 'spx_knowledge_'
+const PREFIX = 'multikb_knowledge_'
 
 // LocalStorage
 export const localStorage = {

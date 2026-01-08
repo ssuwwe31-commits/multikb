@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <aside class="app-sidebar" :class="{ collapsed }">
     <el-menu
       :default-active="activeMenu"
@@ -97,7 +97,42 @@ defineProps<Props>()
 
 const route = useRoute()
 
-const activeMenu = computed(() => route.path)
+// 智能匹配菜单项，支持子路径
+const activeMenu = computed(() => {
+  const path = route.path
+  
+  // QA 相关页面统一高亮到 /qa
+  if (path.startsWith('/qa')) {
+    return '/qa'
+  }
+  
+  // 知识图谱相关页面
+  if (path.startsWith('/knowledge-graph')) {
+    return path
+  }
+  
+  // 知识库相关页面
+  if (path.startsWith('/knowledge-bases')) {
+    return '/knowledge-bases'
+  }
+  
+  // 文档相关页面
+  if (path.startsWith('/documents')) {
+    return '/documents'
+  }
+  
+  // 图片相关页面
+  if (path.startsWith('/images')) {
+    return '/images'
+  }
+  
+  // 搜索相关页面
+  if (path.startsWith('/search')) {
+    return '/search'
+  }
+  
+  return path
+})
 </script>
 
 <style lang="scss" scoped>

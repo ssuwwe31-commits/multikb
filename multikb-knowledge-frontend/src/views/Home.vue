@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="home">
     <!-- 动态背景 -->
     <div class="animated-background">
@@ -15,11 +15,11 @@
       <div class="hero-section">
         <div class="title-wrapper">
           <h1 class="main-title">
-            <span class="title-word">SPX</span>
+            <span class="title-word">multikb</span>
             <span class="title-word gradient-text">Knowledge</span>
             <span class="title-word">Base</span>
           </h1>
-          <p class="subtitle">AI驱动的企业级知识运营中枢，覆盖采集、治理、问答、观测与合规</p>
+          <p class="subtitle">企业级知识库管理平台 · 支持9种文档格式 · 多模态检索 · 知识图谱 · ClamAV安全防护 · 完全开源</p>
         </div>
 
         <div class="hero-badges">
@@ -38,7 +38,7 @@
           <el-button 
             type="primary" 
             size="large" 
-            @click="$router.push('/qa/chat')"
+            @click="$router.push('/qa')"
             class="action-btn"
           >
             <el-icon><ChatDotRound /></el-icon>
@@ -75,7 +75,7 @@
 
       <!-- 最新能力 -->
       <div class="latest-section">
-        <h2 class="section-title">近期更新</h2>
+        <h2 class="section-title">核心亮点</h2>
         <div class="latest-grid">
           <div class="latest-card" v-for="(item, index) in highlights" :key="index">
             <div class="latest-icon">
@@ -135,97 +135,139 @@ import {
   Cpu,
   MagicStick,
   Connection,
-  Lock
+  Lock,
+  CircleCheck,
+  Link,
+  Setting,
+  Clock,
+  DocumentCopy
 } from '@element-plus/icons-vue'
 
 const features = ref([
   {
-    icon: markRaw(ChatDotRound),
-    title: '多模态问答',
-    description: 'RAG 检索 + LLM 兜底，结果可追溯，文本 / 图片 / 表格多模态实时响应'
+    icon: markRaw(Lock),
+    title: '企业级安全',
+    description: 'ClamAV 病毒扫描 + 恶意脚本检测，多级数据隔离，完整审计日志，行业唯一'
   },
   {
     icon: markRaw(Document),
-    title: '统一文档管道',
-    description: 'DOCX / PDF / TXT / 图片一键解析，行号标注、结构分块、TXT 元数据补齐'
+    title: '9种文档格式',
+    description: 'PDF / Word / Excel / PPT / HTML / Markdown / TXT / JSON / XML 完整支持'
   },
   {
     icon: markRaw(Search),
-    title: '混合搜索',
-    description: '向量搜索 + 关键词 + 搜索历史分页 + LLM 兜底标注，体验与精准度兼顾'
+    title: '多模态检索',
+    description: '文本 + 图片 + 混合检索，CLIP 图文对齐，OCR 提取，准确率提升 20%+'
+  },
+  {
+    icon: markRaw(DocumentCopy),
+    title: '双层版本管理',
+    description: '文档级 + 块级版本控制，版本对比、一键回滚、修改者追踪'
+  },
+  {
+    icon: markRaw(Connection),
+    title: '知识图谱',
+    description: 'NebulaGraph 分布式图数据库，三种实体提取模式，10+ 种关系识别'
+  },
+  {
+    icon: markRaw(ChatDotRound),
+    title: '智能问答',
+    description: '6 种检索策略，WebSocket 流式输出，引用溯源，首 Token < 1s'
   },
   {
     icon: markRaw(Lightning),
-    title: '任务优先级调度',
+    title: '任务调度',
     description: 'Celery 多队列 + 优先级 + 分布式锁 + 快速失败，保障解析链路不堆积'
   },
   {
     icon: markRaw(Monitor),
-    title: '观测诊断',
-    description: 'K8s 增量同步窗口、诊断记录软硬删除、集群健康巡检，问题秒级定位'
-  },
-  {
-    icon: markRaw(DataAnalysis),
-    title: '运行洞察',
-    description: '统计页、图片分布、指标面板和任务监控，系统状态一目了然'
+    title: '运维监控',
+    description: 'K8s 集群观测、任务监控、指标面板、诊断记录，系统状态一目了然'
   },
   {
     icon: markRaw(Picture),
-    title: '图片与素材治理',
-    description: '图片总量 / 类型 / 状态可视，MinIO 类型回填脚本保证历史一致性'
+    title: '图片治理',
+    description: '图片向量化、相似度搜索、OCR 识别、MinIO 统一存储管理'
+  },
+  {
+    icon: markRaw(DataAnalysis),
+    title: '数据统计',
+    description: '文档分析、问答统计、图片分布、任务追踪，数据驱动决策'
   },
   {
     icon: markRaw(CollectionTag),
-    title: '导出与合规',
-    description: '导出任务软硬删除、MinIO 对象回收、审计日志全链路记录，满足治理诉求'
+    title: '导出合规',
+    description: '导出任务管理、软硬删除、对象回收、审计日志，满足治理要求'
+  },
+  {
+    icon: markRaw(Setting),
+    title: '高度可扩展',
+    description: '100+ API 接口、模块化架构、Docker 部署、支持私有化与二次开发'
   }
 ])
 
 const heroBadges = ref([
+  { icon: markRaw(Lock), text: 'ClamAV 安全', gradient: 'badge-gradient-1' },
+  { icon: markRaw(MagicStick), text: '多模态检索', gradient: 'badge-gradient-2' },
+  { icon: markRaw(Connection), text: '知识图谱', gradient: 'badge-gradient-3' },
+  { icon: markRaw(DocumentCopy), text: '双层版本', gradient: 'badge-gradient-4' },
   { icon: markRaw(Cpu), text: 'LLM Ready', gradient: 'badge-gradient-1' },
-  { icon: markRaw(MagicStick), text: '多模态输入', gradient: 'badge-gradient-2' },
-  { icon: markRaw(Connection), text: 'K8s 观测', gradient: 'badge-gradient-3' },
-  { icon: markRaw(Lock), text: '合规可溯', gradient: 'badge-gradient-4' }
+  { icon: markRaw(CircleCheck), text: '合规可溯', gradient: 'badge-gradient-2' }
 ])
 
 const highlights = ref([
   {
-    icon: markRaw(UploadFilled),
-    title: 'TXT 上传 & 编排',
-    description: '自动编码检测、段落/行号定位与结构化切分，纯文本同样可视可控',
-    tag: '文档能力'
+    icon: markRaw(Connection),
+    title: '知识图谱自动构建',
+    description: 'NebulaGraph 分布式存储，三种实体提取模式，自动关系识别，ECharts 可视化展示',
+    tag: '核心亮点'
   },
   {
     icon: markRaw(Picture),
-    title: '图片统计与类型回填',
-    description: '图片总量、类型/状态分布与历史回填脚本，全量掌握素材资产',
-    tag: '数据统计'
+    title: '多模态检索引擎',
+    description: 'CLIP 模型图文对齐，OCR 文字提取，图文混合检索，准确率提升 20%+',
+    tag: '核心亮点'
+  },
+  {
+    icon: markRaw(Lock),
+    title: 'ClamAV 安全防护',
+    description: '实时病毒扫描，恶意脚本检测，行业唯一集成 ClamAV 的开源知识库系统',
+    tag: '企业级'
+  },
+  {
+    icon: markRaw(DocumentCopy),
+    title: '双层版本管理',
+    description: '文档级 + 块级版本控制，版本对比、一键回滚、完整修改记录',
+    tag: '企业级'
+  },
+  {
+    icon: markRaw(Clock),
+    title: 'WebSocket 流式问答',
+    description: '实时流式输出，首 Token < 1s，6 种检索策略，引用溯源标注',
+    tag: '用户体验'
   },
   {
     icon: markRaw(Monitor),
-    title: 'K8s 同步与诊断',
-    description: '增量同步窗口、快速失败、诊断记录软硬删除，运维场景更安全',
+    title: 'K8s 集群观测',
+    description: '增量同步、健康巡检、诊断记录、任务监控，运维场景更安全',
     tag: '可观测'
-  },
-  {
-    icon: markRaw(Histogram),
-    title: '检索历史与兜底标注',
-    description: 'LLM 回答自动标注来源，搜索历史分页展示，使用体验更透明',
-    tag: '搜索体验'
   }
 ])
 
 const stats = ref([
-  { value: '12+', label: '活跃知识库', desc: '实时同步 / 自动治理' },
-  { value: '3.5w+', label: '已解析文档', desc: 'DOCX / PDF / TXT / 图片' },
-  { value: '18w+', label: '累计问答', desc: 'RAG 检索 + LLM 兜底' },
-  { value: '99.9%', label: '系统可用性', desc: '任务优先级 + 快速失败' }
+  { value: '9种', label: '文档格式', desc: 'PDF / Word / Excel / PPT 等' },
+  { value: '100+', label: 'API接口', desc: '完整的功能覆盖' },
+  { value: '6种', label: '检索策略', desc: '向量 / 文本 / 混合 / 图片等' },
+  { value: '<1s', label: '问答响应', desc: 'WebSocket 流式输出' },
+  { value: '3种', label: '提取模式', desc: '知识图谱实体提取' },
+  { value: '20%+', label: '准确率提升', desc: '多模态混合检索' }
 ])
 
 const recentActivities = ref([
-  { icon: markRaw(Document), text: '完成 TXT 文档批量解析', time: '15 分钟前' },
-  { icon: markRaw(Monitor), text: '诊断记录已软硬删除并归档', time: '2 小时前' },
-  { icon: markRaw(CollectionTag), text: '导出任务自动清理 MinIO 文件', time: '昨天' }
+  { icon: markRaw(Connection), text: '知识图谱自动构建完成，已提取 1000+ 个实体', time: '10 分钟前' },
+  { icon: markRaw(Lock), text: 'ClamAV 扫描完成，检测到 0 个安全威胁', time: '30 分钟前' },
+  { icon: markRaw(Document), text: '完成 50 个文档的批量解析和向量化', time: '1 小时前' },
+  { icon: markRaw(ChatDotRound), text: '今日已完成 200+ 次智能问答', time: '2 小时前' }
 ])
 
 onMounted(() => {
@@ -464,8 +506,8 @@ const loadStats = async () => {
 
     .features-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-      gap: 30px;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 24px;
     }
 
     .feature-card {
@@ -541,7 +583,7 @@ const loadStats = async () => {
 
     .latest-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
       gap: 24px;
     }
 
@@ -604,8 +646,8 @@ const loadStats = async () => {
 
   .stats-section {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 24px;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 20px;
     background: rgba(6, 10, 24, 0.8);
     backdrop-filter: blur(18px);
     border: 1px solid rgba(64, 158, 255, 0.18);
@@ -620,7 +662,7 @@ const loadStats = async () => {
       padding: 12px 0;
 
       .stat-value {
-        font-size: 52px;
+        font-size: 42px;
         font-weight: 700;
         background: linear-gradient(135deg, #67c23a 0%, #409eff 100%);
         -webkit-background-clip: text;
