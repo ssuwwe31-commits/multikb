@@ -287,10 +287,10 @@ const loadStats = async () => {
   position: relative;
   min-height: 100vh;
   overflow: hidden;
-  background: radial-gradient(circle at top, rgba(39, 112, 255, 0.25), transparent 45%),
-    radial-gradient(circle at 20% 20%, rgba(103, 194, 58, 0.2), transparent 40%),
-    #05060d;
-  color: #ffffff;
+  background: radial-gradient(circle at top, rgba(64, 158, 255, 0.08), transparent 45%),
+    radial-gradient(circle at 20% 20%, rgba(103, 194, 58, 0.08), transparent 40%),
+    #f5f7fa;
+  color: #303133;
 
   .animated-background {
     position: absolute;
@@ -339,18 +339,18 @@ const loadStats = async () => {
     .grid-overlay {
       position: absolute;
       inset: 0;
-      background-image: linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px);
+      background-image: linear-gradient(rgba(0,0,0,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,0,0,0.03) 1px, transparent 1px);
       background-size: 80px 80px;
       animation: gridMove 40s linear infinite;
-      mix-blend-mode: screen;
+      mix-blend-mode: multiply;
       opacity: 0.35;
     }
 
     .scanlines {
       position: absolute;
       inset: 0;
-      background-image: linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px);
+      background-image: linear-gradient(rgba(0,0,0,0.02) 1px, transparent 1px);
       background-size: 100% 4px;
       opacity: 0.25;
       animation: scan 12s linear infinite;
@@ -409,7 +409,7 @@ const loadStats = async () => {
 
     .subtitle {
       font-size: 20px;
-      color: rgba(255, 255, 255, 0.7);
+      color: #606266;
       margin-top: 20px;
       animation: fadeInUp 0.6s ease-out 0.4s backwards;
     }
@@ -427,20 +427,20 @@ const loadStats = async () => {
         gap: 6px;
         padding: 8px 16px;
         border-radius: 999px;
-        background: rgba(13, 17, 32, 0.9);
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: #ffffff;
+        border: 1px solid #e4e7ed;
         font-size: 14px;
         letter-spacing: 0.2px;
-        box-shadow: 0 0 25px rgba(64, 158, 255, 0.25);
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
         backdrop-filter: blur(6px);
-        color: #e5f4ff;
+        color: #606266;
         text-transform: uppercase;
 
         .badge-icon {
           width: 24px;
           height: 24px;
           border-radius: 50%;
-          background: rgba(0,0,0,0.25);
+          background: #f0f2f5;
           display: inline-flex;
           align-items: center;
           justify-content: center;
@@ -511,15 +511,15 @@ const loadStats = async () => {
     }
 
     .feature-card {
-      background: rgba(8, 12, 26, 0.85);
+      background: #ffffff;
       backdrop-filter: blur(14px);
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      border: 1px solid #e4e7ed;
       border-radius: 18px;
       padding: 32px;
       transition: all 0.35s ease;
       position: relative;
       overflow: hidden;
-      box-shadow: 0 20px 50px rgba(5, 6, 13, 0.7);
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
 
       &::before {
         content: '';
@@ -537,8 +537,8 @@ const loadStats = async () => {
 
       &:hover {
         transform: translateY(-10px);
-        background: rgba(15, 19, 36, 0.95);
-        box-shadow: 0 25px 60px rgba(64, 158, 255, 0.25);
+        background: #ffffff;
+        box-shadow: 0 8px 24px rgba(64, 158, 255, 0.15);
 
         &::before {
           opacity: 1;
@@ -564,7 +564,7 @@ const loadStats = async () => {
       }
 
       p {
-        color: rgba(255, 255, 255, 0.7);
+        color: #606266;
         line-height: 1.6;
         margin: 0;
       }
@@ -593,15 +593,15 @@ const loadStats = async () => {
       gap: 16px;
       padding: 24px;
       border-radius: 16px;
-      background: rgba(17, 24, 39, 0.7);
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: #ffffff;
+      border: 1px solid #e4e7ed;
       position: relative;
       overflow: hidden;
       transition: all 0.3s ease;
 
       &:hover {
-        border-color: rgba(64, 158, 255, 0.5);
-        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+        border-color: #409eff;
+        box-shadow: 0 4px 16px rgba(64, 158, 255, 0.15);
       }
 
       .latest-icon {
@@ -626,7 +626,7 @@ const loadStats = async () => {
 
         p {
           margin: 0;
-          color: rgba(255, 255, 255, 0.7);
+          color: #606266;
           line-height: 1.6;
         }
       }
@@ -637,8 +637,8 @@ const loadStats = async () => {
         right: 16px;
         padding: 4px 10px;
         border-radius: 999px;
-        background: rgba(103, 194, 58, 0.15);
-        color: #8be28f;
+        background: #f0f9ff;
+        color: #67c23a;
         font-size: 12px;
       }
     }
@@ -648,13 +648,13 @@ const loadStats = async () => {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 20px;
-    background: rgba(6, 10, 24, 0.8);
+    background: #ffffff;
     backdrop-filter: blur(18px);
-    border: 1px solid rgba(64, 158, 255, 0.18);
+    border: 1px solid #e4e7ed;
     border-radius: 24px;
     padding: 40px 48px;
     margin-bottom: 80px;
-    box-shadow: 0 24px 70px rgba(3, 7, 18, 0.85);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
 
     .stat-item {
       text-align: center;
@@ -672,7 +672,7 @@ const loadStats = async () => {
       }
 
       .stat-label {
-        color: rgba(255, 255, 255, 0.8);
+        color: #303133;
         font-size: 15px;
         letter-spacing: 0.3px;
       }
@@ -680,7 +680,7 @@ const loadStats = async () => {
       .stat-desc {
         margin-top: 6px;
         font-size: 13px;
-        color: rgba(255, 255, 255, 0.5);
+        color: #909399;
       }
 
       &::after {
@@ -691,7 +691,7 @@ const loadStats = async () => {
         transform: translateX(-50%);
         width: 60%;
         height: 1px;
-        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
+        background: linear-gradient(90deg, transparent, #e4e7ed, transparent);
         opacity: 0.5;
       }
 
@@ -709,9 +709,9 @@ const loadStats = async () => {
     }
 
     .recent-list {
-      background: rgba(255, 255, 255, 0.05);
+      background: #ffffff;
       backdrop-filter: blur(10px);
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      border: 1px solid #e4e7ed;
       border-radius: 16px;
       padding: 20px;
 
@@ -725,12 +725,12 @@ const loadStats = async () => {
         transition: all 0.3s ease;
 
         &:hover {
-          background: rgba(255, 255, 255, 0.05);
+          background: #f0f9ff;
         }
 
         .time {
           margin-left: auto;
-          color: rgba(255, 255, 255, 0.5);
+          color: #909399;
           font-size: 12px;
         }
       }

@@ -1,0 +1,285 @@
+-- ============================================
+-- NebulaGraph 代码库集成图模式
+-- 版本：v1.0
+-- 日期：2026-01-12
+-- 说明：为代码分析功能添加图谱支持
+-- ============================================
+
+-- 注意：执行前请确保已连接到正确的 Space
+-- USE multikb_knowledge;
+
+-- ============================================
+-- 第一步：创建代码相关的顶点类型（Tag）
+-- ============================================
+
+-- 1. 代码文件顶点
+CREATE TAG IF NOT EXISTS code_file (
+    -- 基本信息
+    file_path STRING COMMENT "文件路径（相对路径）",
+    file_name STRING COMMENT "文件名",
+    language STRING COMMENT "编程语言",
+    
+    -- 关联ID
+    mysql_id INT COMMENT "MySQL中的文件ID",
+    repository_id INT COMMENT "仓库ID",
+    knowledge_base_id INT COMMENT "知识库ID",
+    
+    -- 内容信息
+    content_hash STRING COMMENT "SHA256哈希",
+    lines_of_code INT COMMENT "代码行数",
+    file_size INT COMMENT "文件大小（字节）",
+    
+    -- 分析结果
+    symbols_count INT DEFAULT 0 COMMENT "符号数量",
+    imports_count INT DEFAULT 0 COMMENT "导入数量",
+    complexity_score DOUBLE DEFAULT 0.0 COMMENT "平均复杂度",
+    
+    -- 时间戳
+    created_at TIMESTAMP COMMENT "创建时间",
+    updated_at TIMESTAMP COMMENT "更新时间"
+) COMMENT = "代码文件顶点";
+
+-- 2. 代码符号顶点（函数、类、方法）
+CREATE TAG IF NOT EXISTS code_symbol (
+    -- 基本信息
+    symbol_name STRING COMMENT "符号名称",
+    symbol_type STRING COMMENT "符号类型: function/class/method/variable",
+    qualified_name STRING COMMENT "完整限定名",
+    signature STRING COMMENT "函数签名/类声明",
+    
+    -- 关联ID
+    mysql_id INT COMMENT "MySQL中的符号ID",
+    file_id INT COMMENT "文件ID",
+    repository_id INT COMMENT "仓库ID",
+    knowledge_base_id INT COMMENT "知识库ID",
+    
+    -- 位置信息
+    start_line INT COMMENT "起始行号",
+    end_line INT COMMENT "结束行号",
+    
+    -- 文档
+    docstring STRING COMMENT "文档字符串",
+    return_type STRING COMMENT "返回类型",
+    
+    -- 复杂度
+    complexity_score DOUBLE DEFAULT 0.0 COMMENT "圈复杂度",
+    lines_count INT COMMENT "代码行数",
+    
+    -- 时间戳
+    created_at TIMESTAMP COMMENT "创建时间",
+    updated_at TIMESTAMP COMMENT "更新时间"
+) COMMENT = "代码符号顶点（函数、类等）";
+
+-- 3. 代码仓库顶点
+CREATE TAG IF NOT EXISTS code_repository (
+    -- 基本信息
+    repo_name STRING COMMENT "仓库名称（owner/repo）",
+    repo_url STRING COMMENT "仓库URL",
+    description STRING COMMENT "仓库描述",
+    
+    -- 关联ID
+    mysql_id INT COMMENT "MySQL中的仓库ID",
+    knowledge_base_id INT COMMENT "关联的知识库ID",
+    
+    -- Git信息
+    default_branch STRING COMMENT "默认分支",
+    last_commit_hash STRING COMMENT "最后提交哈希",
+    
+    -- 统计信息
+    total_files INT DEFAULT 0 COMMENT "总文件数",
+    total_lines INT DEFAULT 0 COMMENT "总代码行数",
+    
+    -- 时间戳
+    created_at TIMESTAMP COMMENT "创建时间",
+    updated_at TIMESTAMP COMMENT "更新时间"
+) COMMENT = "代码仓库顶点";
+
+-- ============================================
+-- 第二步：创建代码相关的边类型（Edge）
+-- ============================================
+
+-- 1. 导入关系（文件之间或符号之间）
+CREATE EDGE IF NOT EXISTS imports (
+    import_statement STRING COMMENT "导入语句原文",
+    line_number INT COMMENT "行号",
+    import_type STRING COMMENT "导入类型: module/class/function/variable",
+    created_at TIMESTAMP COMMENT "创建时间"
+) COMMENT = "导入关系";
+
+-- 2. 调用关系（函数/方法调用）
+CREATE EDGE IF NOT EXISTS calls (
+    call_location STRING COMMENT "调用位置描述",
+    line_number INT COMMENT "调用行号",
+    call_type STRING COMMENT "调用类型: direct/indirect",
+    created_at TIMESTAMP COMMENT "创建时间"
+) COMMENT = "调用关系";
+
+-- 3. 继承关系（类继承）
+CREATE EDGE IF NOT EXISTS inherits (
+    inheritance_type STRING COMMENT "继承类型: extends/implements",
+    created_at TIMESTAMP COMMENT "创建时间"
+) COMMENT = "继承关系";
+
+-- 4. 包含关系（文件包含符号，仓库包含文件）
+CREATE EDGE IF NOT EXISTS contains (
+    start_line INT COMMENT "起始行号",
+    end_line INT COMMENT "结束行号",
+    container_type STRING COMMENT "容器类型: repository/file",
+    created_at TIMESTAMP COMMENT "创建时间"
+) COMMENT = "包含关系";
+
+-- 5. 实现关系（代码实现概念/接口）
+CREATE EDGE IF NOT EXISTS implements (
+    confidence DOUBLE DEFAULT 1.0 COMMENT "置信度",
+    implementation_detail STRING COMMENT "实现细节描述",
+    created_at TIMESTAMP COMMENT "创建时间"
+) COMMENT = "实现关系";
+
+-- 6. 引用关系（文档引用代码，或代码引用文档）
+CREATE EDGE IF NOT EXISTS references (
+    context STRING COMMENT "引用上下文",
+    reference_type STRING COMMENT "引用类型: inline/block/example/documentation",
+    confidence DOUBLE DEFAULT 1.0 COMMENT "置信度",
+    created_at TIMESTAMP COMMENT "创建时间"
+) COMMENT = "引用关系";
+
+-- 7. 依赖关系（代码依赖）
+CREATE EDGE IF NOT EXISTS depends_on (
+    dependency_type STRING COMMENT "依赖类型: import/call/inherit/implement",
+    strength DOUBLE DEFAULT 1.0 COMMENT "依赖强度",
+    created_at TIMESTAMP COMMENT "创建时间"
+) COMMENT = "依赖关系";
+
+-- ============================================
+-- 第三步：创建索引（优化查询性能）
+-- ============================================
+
+-- 代码文件索引
+CREATE TAG INDEX IF NOT EXISTS code_file_path_index ON code_file(file_path(255));
+CREATE TAG INDEX IF NOT EXISTS code_file_language_index ON code_file(language(50));
+CREATE TAG INDEX IF NOT EXISTS code_file_repo_index ON code_file(repository_id);
+CREATE TAG INDEX IF NOT EXISTS code_file_kb_index ON code_file(knowledge_base_id);
+
+-- 代码符号索引
+CREATE TAG INDEX IF NOT EXISTS code_symbol_name_index ON code_symbol(symbol_name(255));
+CREATE TAG INDEX IF NOT EXISTS code_symbol_type_index ON code_symbol(symbol_type(50));
+CREATE TAG INDEX IF NOT EXISTS code_symbol_file_index ON code_symbol(file_id);
+CREATE TAG INDEX IF NOT EXISTS code_symbol_repo_index ON code_symbol(repository_id);
+
+-- 代码仓库索引
+CREATE TAG INDEX IF NOT EXISTS code_repo_name_index ON code_repository(repo_name(255));
+CREATE TAG INDEX IF NOT EXISTS code_repo_kb_index ON code_repository(knowledge_base_id);
+
+-- ============================================
+-- 第四步：与现有图谱节点关联示例
+-- ============================================
+
+-- 注意：以下是示例查询，不会自动执行
+-- 需要在实际使用时根据具体数据调用
+
+/*
+-- 示例 1：文档节点引用代码文件
+MATCH (d:document {mysql_id: 123})
+MATCH (c:code_file {file_path: "src/main.py"})
+CREATE (d)-[:references {
+    context: "在第5章中引用", 
+    reference_type: "example",
+    confidence: 0.9,
+    created_at: timestamp()
+}]->(c);
+
+-- 示例 2：概念节点与代码符号关联
+MATCH (concept:entity {name: "依赖注入", type: "concept"})
+MATCH (symbol:code_symbol {qualified_name: "ServiceContainer.__init__"})
+CREATE (concept)-[:implements {
+    confidence: 0.85,
+    implementation_detail: "使用构造函数注入依赖",
+    created_at: timestamp()
+}]->(symbol);
+
+-- 示例 3：文档引用代码仓库
+MATCH (d:document {mysql_id: 456})
+MATCH (r:code_repository {repo_name: "owner/project"})
+CREATE (d)-[:references {
+    context: "项目架构文档",
+    reference_type: "documentation",
+    confidence: 1.0,
+    created_at: timestamp()
+}]->(r);
+
+-- 示例 4：查询某个知识库的所有代码文件
+MATCH (kb:knowledge_base {mysql_id: 10})
+      -[:contains]->(repo:code_repository)
+      -[:contains]->(file:code_file)
+RETURN file.file_path, file.language, file.lines_of_code
+LIMIT 100;
+
+-- 示例 5：查询某个代码文件的所有符号
+MATCH (file:code_file {file_path: "src/services/user.py"})
+      -[:contains]->(symbol:code_symbol)
+RETURN symbol.symbol_name, symbol.symbol_type, symbol.complexity_score
+ORDER BY symbol.start_line;
+
+-- 示例 6：查询符号的调用关系链
+MATCH path = (s1:code_symbol {symbol_name: "main"})
+             -[:calls*1..3]->
+             (s2:code_symbol)
+RETURN path
+LIMIT 50;
+
+-- 示例 7：查询文档和代码的关联
+MATCH (d:document)-[r:references]->(c:code_file)
+WHERE d.knowledge_base_id == 10
+RETURN d.title, c.file_path, r.reference_type, r.confidence
+ORDER BY r.confidence DESC
+LIMIT 20;
+*/
+
+-- ============================================
+-- 完成！
+-- ============================================
+
+-- 验证创建的 Tag
+SHOW TAGS;
+
+-- 验证创建的 Edge
+SHOW EDGES;
+
+-- 验证索引
+SHOW TAG INDEXES;
+
+-- ============================================
+-- 使用说明
+-- ============================================
+
+/*
+### 执行步骤：
+
+1. 连接到 NebulaGraph：
+   ```bash
+   nebula-console -addr 127.0.0.1 -port 9669 -u root -p password
+   ```
+
+2. 切换到正确的 Space：
+   ```nGQL
+   USE multikb_knowledge;
+   ```
+
+3. 执行本脚本：
+   ```bash
+   :source code_repository_schema.nGQL
+   ```
+
+4. 验证创建结果：
+   ```nGQL
+   SHOW TAGS;
+   SHOW EDGES;
+   SHOW TAG INDEXES;
+   ```
+
+### 数据同步：
+
+使用 Python 服务（NebulaCodeService）自动同步 MySQL 数据到 NebulaGraph。
+
+详见：`app/services/nebula_code_service.py`
+*/

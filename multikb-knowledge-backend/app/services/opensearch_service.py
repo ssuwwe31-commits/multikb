@@ -1,4 +1,4 @@
-﻿"""
+"""
 OpenSearch Service
 根据文档处理流程设计实现OpenSearch集成功能
 """
@@ -947,15 +947,15 @@ class OpenSearchService:
             if category_id is not None:
                 filters.append({"term": {"category_id": category_id}})
 
-            # 额外调试日志（仅首5维），便于定位解析问题
-            try:
-                from app.core.logging import logger as _lg
-                _lg.info(
-                    f"[KNN] index={self.document_index}, dim={len(query_vector)}, "
-                    f"first5={query_vector[:5]}, kb_id={knowledge_base_id}, category_id={category_id}"
-                )
-            except Exception:
-                pass
+            # 移除详细的向量值日志，减少日志量（只在 DEBUG 级别记录维度）
+            # try:
+            #     from app.core.logging import logger as _lg
+            #     _lg.debug(
+            #         f"[KNN] index={self.document_index}, dim={len(query_vector)}, "
+            #         f"kb_id={knowledge_base_id}, category_id={category_id}"
+            #     )
+            # except Exception:
+            #     pass
 
             # 2.11 官方稳态语法：顶层 knn + field/query_vector，filter 仅在存在时添加
             # 按 OpenSearch k-NN plugin 固定语法：content_vector + vector（不要 values/field/query_vector）
@@ -1081,7 +1081,8 @@ class OpenSearchService:
                     query_vector = query_vector.tolist()
                 # 确保是列表且元素是浮点数
                 query_vector = [float(x) for x in query_vector]
-                logger.info(f"[Image KNN] 向量维度: {len(query_vector)}, 前5个值: {query_vector[:5]}")
+                # 移除详细的向量值日志，只记录维度
+                logger.debug(f"[Image KNN] 向量维度: {len(query_vector)}")
             except Exception as e:
                 logger.error(f"[Image KNN] query_vector 类型转换失败: {e}, 类型: {type(query_vector)}")
                 raise CustomException(

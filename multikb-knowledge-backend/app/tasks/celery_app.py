@@ -22,6 +22,7 @@ celery_app = Celery(
         "app.tasks.observability_tasks",
         "app.tasks.security_scan_tasks",
         "app.tasks.knowledge_graph_tasks",
+        "app.tasks.code_repository_tasks",  # 代码库任务
     ]
 )
 
@@ -77,6 +78,7 @@ celery_app.conf.update(
         "app.tasks.notification_tasks.*": {"queue": "notification"},
         "app.tasks.observability_tasks.*": {"queue": "observability"},
         "app.tasks.security_scan_tasks.*": {"queue": "security_scan"},
+        "app.tasks.code_repository_tasks.*": {"queue": "code"},  # 代码库任务队列
     },
     # 任务默认优先级：数字越大优先级越高（0-255）
     # 注意：优先级需要在任务发送时通过 priority 参数设置，这里只是默认值

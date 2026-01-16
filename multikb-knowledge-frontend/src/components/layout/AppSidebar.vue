@@ -55,6 +55,11 @@
         <span>图片管理</span>
       </el-menu-item>
       
+      <el-menu-item index="/code-repository">
+        <el-icon><Platform /></el-icon>
+        <span>代码库分析</span>
+      </el-menu-item>
+      
       <el-menu-item index="/statistics">
         <el-icon><DataAnalysis /></el-icon>
         <span>数据统计</span>
@@ -86,7 +91,8 @@ import {
   DataAnalysis,
   Download,
   DataBoard,
-  Connection
+  Connection,
+  Platform
 } from '@element-plus/icons-vue'
 
 interface Props {
@@ -139,9 +145,9 @@ const activeMenu = computed(() => {
 .app-sidebar {
   width: 240px;
   height: 100%;
-  background: rgba(255, 255, 255, 0.05);
+  background: #ffffff;
   backdrop-filter: blur(10px);
-  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  border-right: 1px solid #e4e7ed;
   transition: width 0.3s;
 
   &.collapsed {
@@ -151,19 +157,19 @@ const activeMenu = computed(() => {
   :deep(.el-menu) {
     background: transparent;
     border-right: none;
-    color: #e4e7ed;
+    color: #303133;
 
     .el-menu-item {
-      color: rgba(255, 255, 255, 0.7);
+      color: #606266;
       transition: all 0.3s ease;
 
       &:hover {
-        background: rgba(64, 158, 255, 0.2);
+        background: #f0f9ff;
         color: #409eff;
       }
 
       &.is-active {
-        background: rgba(64, 158, 255, 0.2);
+        background: #ecf5ff;
         color: #409eff;
         border-right: 3px solid #409eff;
       }
@@ -171,11 +177,11 @@ const activeMenu = computed(() => {
 
     .el-sub-menu {
       .el-sub-menu__title {
-        color: rgba(255, 255, 255, 0.7);
+        color: #606266;
         transition: all 0.3s ease;
 
         &:hover {
-          background: rgba(64, 158, 255, 0.2);
+          background: #f0f9ff;
           color: #409eff;
         }
       }

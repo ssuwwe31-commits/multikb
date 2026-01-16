@@ -1,4 +1,4 @@
-﻿import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 
 // 路由配置
@@ -263,6 +263,25 @@ const routes: RouteRecordRaw[] = [
         meta: {
           title: '实体类型管理',
           keepAlive: true
+        }
+      },
+      // 代码库分析（2026-01-12 新增）
+      {
+        path: 'code-repository',
+        name: 'CodeRepository',
+        component: () => import('@/views/CodeRepository/index.vue'),
+        meta: {
+          title: '代码库分析',
+          keepAlive: true
+        }
+      },
+      {
+        path: 'code-repository/:id',
+        name: 'CodeRepositoryDetail',
+        component: () => import('@/views/CodeRepository/detail.vue'),
+        meta: {
+          title: '代码库详情',
+          keepAlive: false
         }
       }
     ]

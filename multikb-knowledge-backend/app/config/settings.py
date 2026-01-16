@@ -73,7 +73,7 @@ class Settings(BaseSettings):
     # 向量模型配置
     OLLAMA_BASE_URL: str = "http://192.168.131.158:11434"
     OLLAMA_MODEL: str = "llama2"
-    OLLAMA_EMBEDDING_MODEL: str = "nomic-embed-text"
+    OLLAMA_EMBEDDING_MODEL: str = "qwen3-embedding:4b"  # 代码专用向量模型（可从 .env 文件配置）
     IMAGE_EMBEDDING_MODEL: str = "clip_vit_b32"
     CLIP_MODEL_NAME: str = "ViT-B-32"
     CLIP_MODELS_DIR: str = str((_PROJECT_ROOT / "models" / "clip").resolve())
@@ -96,6 +96,30 @@ class Settings(BaseSettings):
     OLLAMA_OCR_BASE_URL: str | None = None
     OLLAMA_OCR_TIMEOUT: int = 600  # 增加到 600 秒（10分钟），适配大图片和复杂图片 OCR 处理
     OLLAMA_OCR_MAX_RETRIES: int = 2
+    
+    # 代码库分析配置（2026-01-12 新增）
+    CODE_REPO_ENABLED: bool = True
+    CODE_REPO_CLONE_DIR: str = str((_PROJECT_ROOT / "data" / "code_repositories").resolve())
+    CODE_REPO_MAX_SIZE_MB: int = 1024  # 最大仓库大小（MB）
+    CODE_REPO_MAX_FILES: int = 10000  # 最大文件数
+    CODE_REPO_TIMEOUT: int = 600  # 克隆超时（秒）
+    CODE_PARSE_ENABLED: bool = True
+    CODE_PARSE_LANGUAGES: str = "python,javascript,typescript,java"
+    CODE_PARSE_MAX_FILE_SIZE_KB: int = 1024  # 单文件最大解析大小
+    CODE_PARSE_SKIP_PATTERNS: str = "node_modules,dist,build,__pycache__,.git,venv"
+    GIT_DEFAULT_BRANCH: str = "main"
+    GIT_SHALLOW_CLONE: bool = True  # 浅克隆（只拉取最近的commit）
+    GIT_CLONE_DEPTH: int = 1
+    CODE_LLM_MODEL: str = "qwen2.5-coder:7b"  # 代码专用LLM模型
+    CODE_LLM_BASE_URL: Optional[str] = None  # 可以单独部署Code LLM
+    
+    # 代码向量化配置
+    CODE_VECTORIZATION_BATCH_SIZE: int = 10  # 批量向量化批次大小
+    CODE_VECTORIZATION_MAX_CONCURRENT: int = 5  # 最大并发数
+    CODE_VECTORIZATION_RETRY_TIMES: int = 3  # 向量化重试次数
+    CODE_VECTORIZATION_RETRY_DELAY: float = 1.0  # 重试延迟（秒）
+    CODE_VECTORIZATION_CACHE_ENABLED: bool = True  # 是否启用向量化缓存（基于内容哈希）
+    CODE_VECTORIZATION_TIMEOUT: int = 30  # 向量化超时时间（秒）
     
     # QA系统配置
     QA_DEFAULT_PAGE_SIZE: int = 20
@@ -134,9 +158,18 @@ class Settings(BaseSettings):
     QA_HISTORY_MAX_PAGE_SIZE: int = 100
     
     # 向量维度
-    TEXT_EMBEDDING_DIMENSION: int = 1024
+    # 注意：qwen3-embedding:4b 的默认维度是 2560
+    # 测试结果：Ollama API 不支持 dimension 参数，始终返回默认的 2560 维
+    # 因此必须使用 2560 维，否则会导致 OpenSearch 索引维度不匹配
+    TEXT_EMBEDDING_DIMENSION: int = 2560  # 向量维度（qwen3-embedding:4b 的默认维度，可从 .env 文件配置）
     IMAGE_EMBEDDING_DIMENSION: int = 512
-    TEXT_EMBED_MAX_CHARS: int = 1024
+    TEXT_EMBED_MAX_CHARS: int = 2048  # 代码向量化时支持更长的文本（从1024增加到2048）
+    
+    # 问题分类配置
+    QUESTION_CLASSIFIER_ENABLED: bool = True  # 是否启用问题分类器
+    QUESTION_CLASSIFIER_CACHE_ENABLED: bool = True  # 是否启用分类缓存
+    QUESTION_CLASSIFIER_CACHE_SIZE: int = 1000  # 分类缓存大小
+    QUESTION_CLASSIFIER_LLM_TIMEOUT: int = 10  # LLM 分类超时时间（秒）
     
     # Excel 解析配置
     EXCEL_ENABLE_FLATTENED_TEXT: bool = False
@@ -391,6 +424,8 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = _ENV_FILE
+        # 编码设置：优先使用 utf-8，如果文件有编码问题会自动处理
+        # Windows 中文环境如果仍有问题，可以尝试 'gbk' 或 'utf-8-sig'
         env_file_encoding = "utf-8"
         case_sensitive = True
         extra = "ignore"  # 忽略未声明的环境变量，避免启动失败

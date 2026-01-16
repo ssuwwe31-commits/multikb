@@ -1,4 +1,4 @@
-﻿"""
+"""
 API Router Configuration
 """
 
@@ -29,7 +29,11 @@ from app.api.v1.routes import (
     tasks,
     knowledge_graph,
     entity_type,
+    unified_search,
+    unified_qa,
 )
+# 代码库分析（2026-01-12 新增）
+from app.api.v1 import code_repository
 from app.dependencies.auth import get_current_user
 
 # 创建API路由器
@@ -166,4 +170,22 @@ api_router.include_router(
     entity_type.router,
     prefix="/knowledge-graph",
     tags=["实体类型管理"]
+)
+
+# 代码库分析（2026-01-12 新增）
+api_router.include_router(
+    code_repository.router,
+    tags=["代码库分析"]
+)
+
+# 统一搜索（2026-01-12 新增：代码深度集成）
+api_router.include_router(
+    unified_search.router,
+    tags=["统一搜索"]
+)
+
+# 统一问答（2026-01-12 新增：代码深度集成）
+api_router.include_router(
+    unified_qa.router,
+    tags=["统一问答"]
 )

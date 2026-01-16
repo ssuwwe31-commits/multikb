@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="app-layout">
     <AppSidebar :collapsed="sidebarCollapsed" />
     <div class="app-content">
@@ -31,7 +31,7 @@ const toggleSidebar = () => {
   width: 100%;
   height: 100%;
   display: flex;
-  background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #16213e 100%);
+  background: linear-gradient(135deg, #f5f7fa 0%, #e8eef5 50%, #dfe6f0 100%);
 }
 
 .app-content {
@@ -55,7 +55,7 @@ const toggleSidebar = () => {
     left: 0;
     right: 0;
     bottom: 0;
-    background: radial-gradient(circle at 20% 20%, rgba(64, 158, 255, 0.05) 0%, transparent 50%);
+    background: radial-gradient(circle at 20% 20%, rgba(64, 158, 255, 0.03) 0%, transparent 50%);
     pointer-events: none;
   }
 }
@@ -70,39 +70,39 @@ const toggleSidebar = () => {
   opacity: 0;
 }
 
-// 深色主题的卡片样式
+// 浅色主题的卡片样式
 :deep(.el-card) {
-  background: rgba(255, 255, 255, 0.05);
+  background: #ffffff;
   backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #e4e7ed;
+  border: 1px solid #e4e7ed;
+  color: #303133;
 
   .el-card__header {
-    background: rgba(255, 255, 255, 0.05);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    color: #e4e7ed;
+    background: #f5f7fa;
+    border-bottom: 1px solid #e4e7ed;
+    color: #303133;
   }
 
   .el-card__body {
-    color: #e4e7ed;
+    color: #606266;
   }
 }
 
-// 深色主题的表格样式
+// 浅色主题的表格样式
 :deep(.el-table) {
-  background: transparent;
-  color: #e4e7ed;
+  background: #ffffff;
+  color: #303133;
 
   .el-table__header {
     th {
-      background: rgba(30, 35, 50, 0.8) !important;
-      color: #8fa8d0 !important;
-      border-bottom: 2px solid rgba(64, 158, 255, 0.3);
+      background: #f5f7fa !important;
+      color: #606266 !important;
+      border-bottom: 2px solid #e4e7ed;
       font-weight: 500 !important;
       font-size: 15px !important;
       
       .cell {
-        color: #b8d4f0 !important;
+        color: #303133 !important;
         font-weight: 500;
         font-size: 15px !important;
       }
@@ -111,20 +111,20 @@ const toggleSidebar = () => {
 
   .el-table__body {
     tr {
-      background: rgba(255, 255, 255, 0.02);
+      background: #ffffff;
       
       &:hover {
-        background: rgba(64, 158, 255, 0.15);
+        background: #f0f9ff;
         cursor: pointer;
       }
     }
 
     td {
-      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-      color: #ffffff;
+      border-bottom: 1px solid #ebeef5;
+      color: #606266;
       
       .cell {
-        color: #ffffff;
+        color: #606266;
         font-weight: 400;
         font-size: 15px;
       }
@@ -132,37 +132,37 @@ const toggleSidebar = () => {
   }
 
   &::before {
-    background-color: rgba(255, 255, 255, 0.2) !important;
+    background-color: #ebeef5 !important;
   }
 
   .el-table__inner-wrapper::before {
-    background-color: rgba(255, 255, 255, 0.2);
+    background-color: #ebeef5;
   }
 }
 
-// 深色主题的按钮
+// 浅色主题的按钮
 :deep(.el-button) {
   font-size: 15px;
   
   &:not(.el-button--primary) {
-    background: rgba(255, 255, 255, 0.05);
-    border-color: rgba(255, 255, 255, 0.2);
-    color: #e4e7ed;
+    background: #ffffff;
+    border-color: #dcdfe6;
+    color: #606266;
 
     &:hover {
-      background: rgba(255, 255, 255, 0.1);
+      background: #f0f9ff;
       border-color: #409eff;
       color: #409eff;
     }
   }
 }
 
-// 深色主题的分页
+// 浅色主题的分页
 :deep(.el-pagination) {
   button {
-    background: rgba(255, 255, 255, 0.05);
-    color: #e4e7ed;
-    border-color: rgba(255, 255, 255, 0.2);
+    background: #ffffff;
+    color: #606266;
+    border-color: #dcdfe6;
 
     &:hover {
       color: #409eff;
@@ -172,56 +172,56 @@ const toggleSidebar = () => {
 
   .el-pagination__total,
   .el-pager li {
-    color: #e4e7ed;
+    color: #606266;
   }
 }
 
-// 深色主题的标签（Tag）
+// 浅色主题的标签（Tag）
 :deep(.el-tag) {
-  background: rgba(64, 158, 255, 0.2) !important;
-  border-color: rgba(64, 158, 255, 0.5) !important;
-  color: #66b1ff !important;
+  background: #ecf5ff !important;
+  border-color: #d9ecff !important;
+  color: #409eff !important;
   font-weight: 500;
   font-size: 14px;
 
   &.el-tag--success {
-    background: rgba(103, 194, 58, 0.2) !important;
-    border-color: rgba(103, 194, 58, 0.5) !important;
-    color: #85ce61 !important;
+    background: #f0f9ff !important;
+    border-color: #c2e7b0 !important;
+    color: #67c23a !important;
   }
 
   &.el-tag--warning {
-    background: rgba(230, 162, 60, 0.2) !important;
-    border-color: rgba(230, 162, 60, 0.5) !important;
-    color: #ebb563 !important;
+    background: #fdf6ec !important;
+    border-color: #f5dab1 !important;
+    color: #e6a23c !important;
   }
 
   &.el-tag--danger {
-    background: rgba(245, 108, 108, 0.2) !important;
-    border-color: rgba(245, 108, 108, 0.5) !important;
-    color: #f78989 !important;
+    background: #fef0f0 !important;
+    border-color: #fbc4c4 !important;
+    color: #f56c6c !important;
   }
 
   &.el-tag--info {
-    background: rgba(144, 147, 153, 0.2) !important;
-    border-color: rgba(144, 147, 153, 0.5) !important;
-    color: #a8abb2 !important;
+    background: #f4f4f5 !important;
+    border-color: #e9e9eb !important;
+    color: #909399 !important;
   }
 }
 
-// 深色主题的链接
+// 浅色主题的链接
 :deep(.el-link) {
-  color: #66b1ff;
+  color: #409eff;
 
   &:hover {
-    color: #85c4ff;
+    color: #66b1ff;
   }
 }
 
-// 深色主题的空状态
+// 浅色主题的空状态
 :deep(.el-empty) {
   .el-empty__description p {
-    color: rgba(255, 255, 255, 0.5) !important;
+    color: #909399 !important;
   }
 }
 </style>

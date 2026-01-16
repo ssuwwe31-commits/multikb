@@ -107,9 +107,9 @@ async def get_entity_types(
     type_list = [entity_type_to_dict(t, include_children=include_children, service=service) for t in types]
     
     return success_response(
-        message="获取成功",
-        data=paginate_response(type_list, total, page, size)
-    ).model_dump()
+        "获取成功",
+        paginate_response(type_list, total, page, size)
+    )
 
 
 @router.get("/entity-types/tree", response_model=dict)
@@ -125,9 +125,9 @@ async def get_entity_type_tree(
     tree = service.get_type_tree(root_id=root_id, knowledge_base_id=knowledge_base_id, user_id=user_id)
     
     return success_response(
-        message="获取成功",
-        data={"tree": tree, "total": len(tree)}
-    ).model_dump()
+        "获取成功",
+        {"tree": tree, "total": len(tree)}
+    )
 
 
 @router.get("/entity-types/{type_id}", response_model=dict)
@@ -145,9 +145,9 @@ async def get_entity_type(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="实体类型不存在")
     
     return success_response(
-        message="获取成功",
-        data=entity_type_to_dict(entity_type, include_children=include_children, service=service)
-    ).model_dump()
+        "获取成功",
+        entity_type_to_dict(entity_type, include_children=include_children, service=service)
+    )
 
 
 @router.get("/entity-types/{type_id}/children", response_model=dict)
@@ -163,9 +163,9 @@ async def get_entity_type_children(
     type_list = [entity_type_to_dict(t, include_children=False, service=service) for t in children]
     
     return success_response(
-        message="获取成功",
-        data={"types": type_list, "total": len(type_list)}
-    ).model_dump()
+        "获取成功",
+        {"types": type_list, "total": len(type_list)}
+    )
 
 
 @router.post("/entity-types", response_model=dict)
@@ -181,9 +181,9 @@ async def create_entity_type(
     
     # 使用辅助函数避免 SQLAlchemy metadata 属性冲突
     return success_response(
-        message="创建成功",
-        data=entity_type_to_dict(entity_type, include_children=False, service=service)
-    ).model_dump()
+        "创建成功",
+        entity_type_to_dict(entity_type, include_children=False, service=service)
+    )
 
 
 @router.put("/entity-types/{type_id}", response_model=dict)
@@ -200,9 +200,9 @@ async def update_entity_type(
     
     # 使用辅助函数避免 SQLAlchemy metadata 属性冲突
     return success_response(
-        message="更新成功",
-        data=entity_type_to_dict(entity_type, include_children=False, service=service)
-    ).model_dump()
+        "更新成功",
+        entity_type_to_dict(entity_type, include_children=False, service=service)
+    )
 
 
 @router.delete("/entity-types/{type_id}", response_model=dict)
@@ -216,7 +216,7 @@ async def delete_entity_type(
     user_id = int(current_user.get("sub", 0)) if current_user else None
     service.delete_type(type_id, user_id=user_id)
     
-    return success_response(message="删除成功").model_dump()
+    return success_response("删除成功")
 
 
 @router.patch("/entity-types/{type_id}/toggle", response_model=dict)
@@ -233,9 +233,9 @@ async def toggle_entity_type(
     
     # 使用辅助函数避免 SQLAlchemy metadata 属性冲突
     return success_response(
-        message=f"{'启用' if is_enabled else '禁用'}成功",
-        data=entity_type_to_dict(entity_type, include_children=False, service=service)
-    ).model_dump()
+        f"{'启用' if is_enabled else '禁用'}成功",
+        entity_type_to_dict(entity_type, include_children=False, service=service)
+    )
 
 
 # ============================================
@@ -255,9 +255,9 @@ async def get_knowledge_base_entity_types(
     type_list = [entity_type_to_dict(t) for t in types]
     
     return success_response(
-        message="获取成功",
-        data={"types": type_list, "total": len(type_list)}
-    ).model_dump()
+        "获取成功",
+        {"types": type_list, "total": len(type_list)}
+    )
 
 
 @router.post("/knowledge-bases/{kb_id}/entity-types", response_model=dict)
@@ -282,9 +282,9 @@ async def configure_knowledge_base_entity_types(
     )
     
     return success_response(
-        message="配置成功",
-        data={"count": len(kb_entity_types)}
-    ).model_dump()
+        "配置成功",
+        {"count": len(kb_entity_types)}
+    )
 
 
 # ============================================
@@ -301,9 +301,9 @@ async def get_industry_templates(
     templates = service.get_industry_templates()
     
     return success_response(
-        message="获取成功",
-        data={"templates": templates, "total": len(templates)}
-    ).model_dump()
+        "获取成功",
+        {"templates": templates, "total": len(templates)}
+    )
 
 
 @router.get("/entity-type-templates/{template_code}", response_model=dict)
@@ -340,8 +340,8 @@ async def get_industry_template(
             })
     
     return success_response(
-        message="获取成功",
-        data={
+        "获取成功",
+        {
             "template": {
                 "code": template["code"],
                 "name": template["name"],
@@ -349,7 +349,7 @@ async def get_industry_template(
             },
             "entity_types": entity_types
         }
-    ).model_dump()
+    )
 
 
 @router.post("/knowledge-bases/{kb_id}/apply-template", response_model=dict)
@@ -373,7 +373,7 @@ async def apply_industry_template(
     kb_entity_types = service.apply_industry_template(kb_id, request.template_code)
     
     return success_response(
-        message=f"模板 '{request.template_code}' 应用成功",
-        data={"count": len(kb_entity_types)}
-    ).model_dump()
+        f"模板 '{request.template_code}' 应用成功",
+        {"count": len(kb_entity_types)}
+    )
 

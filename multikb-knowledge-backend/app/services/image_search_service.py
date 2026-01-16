@@ -1,4 +1,4 @@
-﻿"""
+"""
 Image Search Service
 根据文档处理流程设计实现图片搜索功能
 """
@@ -157,7 +157,8 @@ class ImageSearchService:
                     logger.error(f"[以文搜图] CLIP文本向量生成失败或维度不正确: 维度={len(text_vector) if text_vector else 0}, 期望=512")
                     text_vector = None  # 标记为失败，将降级到关键词搜索
                 else:
-                    logger.info(f"[以文搜图] CLIP文本向量生成成功: 维度={len(text_vector)}, 前5个值={text_vector[:5] if text_vector else []}")
+                    # 移除详细的向量值日志，只记录成功信息
+                    logger.debug(f"[以文搜图] CLIP文本向量生成成功: 维度={len(text_vector)}")
             except Exception as e:
                 logger.warning(f"[以文搜图] CLIP文本向量生成失败，将降级到关键词搜索: {e}", exc_info=True)
                 text_vector = None  # 降级到关键词搜索

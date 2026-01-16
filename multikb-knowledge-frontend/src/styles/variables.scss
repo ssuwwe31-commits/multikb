@@ -1,4 +1,4 @@
-// 颜色变量 - 科技感配色
+// 颜色变量 - 浅色配色
 $primary-color: #409eff;
 $primary-light: #66b1ff;
 $primary-dark: #2b5aa0;
@@ -7,20 +7,20 @@ $warning-color: #e6a23c;
 $danger-color: #f56c6c;
 $info-color: #909399;
 
-// 背景色
-$bg-dark: #0a0a0a;
-$bg-dark-1: #1a1a1e;
-$bg-dark-2: #2a2a2e;
-$bg-glass: rgba(255, 255, 255, 0.05);
-$bg-glass-light: rgba(255, 255, 255, 0.08);
+// 背景色 - 浅色主题
+$bg-light: #f5f7fa;
+$bg-light-1: #ffffff;
+$bg-light-2: #fafbfc;
+$bg-glass: rgba(255, 255, 255, 0.8);
+$bg-glass-light: rgba(255, 255, 255, 0.9);
 
-// 边框色
-$border-color: rgba(255, 255, 255, 0.1);
-$border-color-light: rgba(255, 255, 255, 0.2);
+// 边框色 - 浅色主题
+$border-color: #e4e7ed;
+$border-color-light: #ebeef5;
 
-// 渐变
+// 渐变 - 浅色主题
 $gradient-primary: linear-gradient(135deg, #409eff 0%, #67c23a 100%);
-$gradient-dark: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #16213e 100%);
+$gradient-light: linear-gradient(135deg, #f5f7fa 0%, #e8eef5 50%, #dfe6f0 100%);
 
 // 尺寸
 $header-height: 60px;

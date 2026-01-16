@@ -6,23 +6,23 @@
   z-index: 3002 !important;
 }
 
-// drawer 暗色主题（全局样式，因为 drawer 使用 append-to-body）
+// drawer 浅色主题（全局样式，因为 drawer 使用 append-to-body）
 .el-drawer {
-  background-color: #1d1e1f !important;
+  background-color: #ffffff !important;
   
   .el-drawer__header {
-    background-color: #1d1e1f !important;
-    color: rgba(255, 255, 255, 0.9) !important;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+    background-color: #ffffff !important;
+    color: #303133 !important;
+    border-bottom: 1px solid #e4e7ed !important;
     
     .el-drawer__title {
-      color: rgba(255, 255, 255, 0.9) !important;
+      color: #303133 !important;
     }
   }
 
   .el-drawer__body {
-    background-color: #1d1e1f !important;
-    color: rgba(255, 255, 255, 0.85) !important;
+    background-color: #ffffff !important;
+    color: #606266 !important;
     overflow-y: auto !important;
     overflow-x: hidden !important;
     
@@ -32,105 +32,105 @@
     }
     
     &::-webkit-scrollbar-track {
-      background: rgba(0, 0, 0, 0.2) !important;
+      background: #f0f2f5 !important;
       border-radius: 4px !important;
     }
     
     &::-webkit-scrollbar-thumb {
-      background: rgba(255, 255, 255, 0.2) !important;
+      background: rgba(64, 158, 255, 0.3) !important;
       border-radius: 4px !important;
       
       &:hover {
-        background: rgba(255, 255, 255, 0.3) !important;
+        background: rgba(64, 158, 255, 0.5) !important;
       }
     }
   }
 }
 
-// 诊断详情 drawer 内所有内容使用暗色主题（全局样式，因为 drawer 使用 append-to-body）
+// 诊断详情 drawer 内所有内容使用浅色主题（全局样式，因为 drawer 使用 append-to-body）
 .diagnosis-detail {
   display: flex !important;
   flex-direction: column !important;
   gap: 16px !important;
-  color: rgba(255, 255, 255, 0.85) !important;
+  color: #606266 !important;
   
-  // 全局覆盖 el-descriptions 的默认白色背景
+  // 全局覆盖 el-descriptions 的背景
   .el-descriptions {
     background-color: transparent !important;
     
     .el-descriptions__table {
-      background-color: rgba(0, 0, 0, 0.7) !important;
+      background-color: #ffffff !important;
       
       tbody {
-        background-color: rgba(0, 0, 0, 0.7) !important;
+        background-color: #ffffff !important;
       }
       
       td, th {
-        background-color: rgba(0, 0, 0, 0.7) !important;
-        color: rgba(255, 255, 255, 0.95) !important;
-        border-color: rgba(255, 255, 255, 0.2) !important;
+        background-color: #ffffff !important;
+        color: #303133 !important;
+        border-color: #e4e7ed !important;
       }
       
       tr {
-        background-color: rgba(0, 0, 0, 0.7) !important;
+        background-color: #ffffff !important;
       }
       
       .el-descriptions__label {
-        background-color: rgba(0, 0, 0, 0.8) !important;
-        color: rgba(255, 255, 255, 0.95) !important;
+        background-color: #f5f7fa !important;
+        color: #303133 !important;
       }
       
       .el-descriptions__content {
-        background-color: rgba(0, 0, 0, 0.7) !important;
-        color: rgba(255, 255, 255, 0.95) !important;
+        background-color: #ffffff !important;
+        color: #606266 !important;
       }
       
       .el-descriptions__cell {
-        background-color: rgba(0, 0, 0, 0.7) !important;
-        border-color: rgba(255, 255, 255, 0.2) !important;
+        background-color: #ffffff !important;
+        border-color: #e4e7ed !important;
       }
     }
   }
   
-  // 全局覆盖 el-alert 的默认亮色背景
+  // 全局覆盖 el-alert 的背景
   .el-alert {
-    background-color: rgba(0, 0, 0, 0.5) !important;
-    color: rgba(255, 255, 255, 0.95) !important;
-    border-color: rgba(255, 255, 255, 0.2) !important;
+    background-color: #f0f2f5 !important;
+    color: #303133 !important;
+    border-color: #e4e7ed !important;
     
     .el-alert__content {
-      color: rgba(255, 255, 255, 0.95) !important;
+      color: #606266 !important;
     }
     
     &.el-alert--error {
-      background-color: rgba(245, 108, 108, 0.25) !important;
-      border-color: rgba(245, 108, 108, 0.4) !important;
-      color: rgba(255, 255, 255, 0.95) !important;
+      background-color: #fef0f0 !important;
+      border-color: #fbc4c4 !important;
+      color: #f56c6c !important;
     }
     
     &.el-alert--warning {
-      background-color: rgba(230, 162, 60, 0.25) !important;
-      border-color: rgba(230, 162, 60, 0.4) !important;
-      color: rgba(255, 255, 255, 0.95) !important;
+      background-color: #fdf6ec !important;
+      border-color: #f5dab1 !important;
+      color: #e6a23c !important;
     }
     
     &.el-alert--success {
-      background-color: rgba(103, 194, 58, 0.25) !important;
-      border-color: rgba(103, 194, 58, 0.4) !important;
-      color: rgba(255, 255, 255, 0.95) !important;
+      background-color: #f0f9ff !important;
+      border-color: #c2e7b0 !important;
+      color: #67c23a !important;
     }
     
     &.el-alert--info {
-      background-color: rgba(0, 0, 0, 0.5) !important;
-      border-color: rgba(64, 158, 255, 0.4) !important;
-      color: rgba(255, 255, 255, 0.95) !important;
+      background-color: #f4f4f5 !important;
+      border-color: #d3d4d6 !important;
+      color: #909399 !important;
     }
   }
   
   // 时间线卡片样式
   .timeline-card {
-    background-color: rgba(0, 0, 0, 0.4) !important;
-    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    background-color: #ffffff !important;
+    border: 1px solid #e4e7ed !important;
     border-radius: 6px !important;
     margin-bottom: 0 !important;
     display: inline-flex !important;
@@ -140,10 +140,10 @@
     width: fit-content !important;
     max-width: 100% !important;
     min-width: 0 !important;
-    color: rgba(255, 255, 255, 0.95) !important;
+    color: #303133 !important;
     
     .timeline-time {
-      color: rgba(255, 255, 255, 0.95) !important;
+      color: #606266 !important;
       font-size: 13px !important;
       display: flex !important;
       align-items: center !important;
@@ -151,7 +151,7 @@
       line-height: 1.4 !important;
       
       .el-icon {
-        color: rgba(64, 158, 255, 0.9) !important;
+        color: #409eff !important;
         font-size: 14px !important;
         flex-shrink: 0 !important;
       }
@@ -162,21 +162,21 @@
     }
     
     .timeline-event {
-      color: rgba(255, 255, 255, 0.95) !important;
+      color: #606266 !important;
       display: flex !important;
       align-items: flex-start !important;
       gap: 8px !important;
       line-height: 1.5 !important;
       
       .event-icon {
-        color: rgba(230, 162, 60, 0.9) !important;
+        color: #e6a23c !important;
         font-size: 14px !important;
         flex-shrink: 0 !important;
         margin-top: 2px !important;
       }
       
       .event-text {
-        color: rgba(255, 255, 255, 0.95) !important;
+        color: #606266 !important;
         font-size: 13px !important;
         line-height: 1.5 !important;
         word-break: break-word !important;
@@ -186,8 +186,8 @@
   }
   
   .timeline-event-card {
-    background-color: rgba(230, 162, 60, 0.15) !important;
-    border-left: 3px solid rgba(230, 162, 60, 0.6) !important;
+    background-color: #fdf6ec !important;
+    border-left: 3px solid #e6a23c !important;
     padding: 8px 12px !important;
   }
   
@@ -196,7 +196,7 @@
     margin-top: 24px !important;
     
     h4 {
-      color: rgba(255, 255, 255, 0.95) !important;
+      color: #303133 !important;
       font-size: 16px !important;
       font-weight: 600 !important;
       margin-bottom: 16px !important;
@@ -216,8 +216,8 @@
   }
   
   .impact-item {
-    background-color: rgba(0, 0, 0, 0.3) !important;
-    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    background-color: #ffffff !important;
+    border: 1px solid #e4e7ed !important;
     border-radius: 6px !important;
     padding: 16px !important;
     transition: all 0.3s ease !important;
@@ -227,12 +227,12 @@
       align-items: center !important;
       gap: 8px !important;
       margin-bottom: 12px !important;
-      color: rgba(255, 255, 255, 0.9) !important;
+      color: #303133 !important;
       font-size: 14px !important;
       font-weight: 600 !important;
       
       .el-icon {
-        color: rgba(64, 158, 255, 0.9) !important;
+        color: #409eff !important;
       }
     }
     
@@ -243,9 +243,9 @@
     }
     
     .impact-tag {
-      background-color: rgba(0, 0, 0, 0.4) !important;
-      border-color: rgba(255, 255, 255, 0.2) !important;
-      color: rgba(255, 255, 255, 0.9) !important;
+      background-color: #f0f2f5 !important;
+      border-color: #d3d4d6 !important;
+      color: #606266 !important;
     }
     
     // Pod 影响 - 蓝色主题（信息级别）
@@ -1829,8 +1829,9 @@
 }
 
 .card {
-  background: #fff;
+  background: #ffffff;
   border-radius: 4px;
   padding: 20px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  border: 1px solid #e4e7ed;
 }

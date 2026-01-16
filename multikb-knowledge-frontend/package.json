@@ -23,6 +23,7 @@
     "highlight.js": "^11.10.0",
     "luckysheet": "^2.1.13",
     "marked": "^13.0.2",
+    "mermaid": "^11.12.2",
     "pinia": "^2.1.7",
     "vue": "^3.4.21",
     "vue-echarts": "^6.7.1",

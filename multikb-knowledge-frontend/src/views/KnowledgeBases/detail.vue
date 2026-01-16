@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="knowledge-base-detail-page">
     <el-card>
       <template #header>
@@ -61,32 +61,109 @@
           </div>
         </div>
 
-        <el-divider>文档列表</el-divider>
+        <!-- 选项卡 -->
+        <el-tabs v-model="activeTab" class="kb-tabs">
+          <!-- 文档列表 -->
+          <el-tab-pane label="📄 文档" name="documents">
+            <el-table :data="documents" v-loading="documentsLoading">
+              <el-table-column prop="title" label="标题" />
+              <el-table-column prop="file_name" label="文件名" />
+              <el-table-column prop="file_type" label="类型" />
+              <el-table-column prop="status" label="状态">
+                <template #default="{ row }">
+                  <el-tag :type="getStatusType(row.status)">{{ getStatusText(row.status) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作">
+                <template #default="{ row }">
+                  <el-button size="small" @click="viewDocument(row)">查看</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
 
-        <el-table :data="documents" v-loading="documentsLoading">
-          <el-table-column prop="title" label="标题" />
-          <el-table-column prop="file_name" label="文件名" />
-          <el-table-column prop="file_type" label="类型" />
-          <el-table-column prop="status" label="状态">
-            <template #default="{ row }">
-              <el-tag :type="getStatusType(row.status)">{{ getStatusText(row.status) }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="操作">
-            <template #default="{ row }">
-              <el-button size="small" @click="viewDocument(row)">查看</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
+            <el-pagination
+              v-model:current-page="docPage"
+              v-model:page-size="docSize"
+              :total="docTotal"
+              @current-change="loadDocuments"
+            />
+          </el-tab-pane>
 
-        <el-pagination
-          v-model:current-page="docPage"
-          v-model:page-size="docSize"
-          :total="docTotal"
-          @current-change="loadDocuments"
-        />
+          <!-- 代码仓库 -->
+          <el-tab-pane label="💻 代码仓库" name="code">
+            <div class="code-repo-section">
+              <el-button type="primary" size="small" @click="showLinkRepoDialog = true">
+                <el-icon><Plus /></el-icon>
+                关联代码仓库
+              </el-button>
+
+              <el-table :data="linkedRepos" v-loading="reposLoading" style="margin-top: 16px;">
+                <el-table-column prop="repo_name" label="仓库名称" />
+                <el-table-column prop="language" label="主要语言" width="120">
+                  <template #default="{ row }">
+                    <el-tag size="small" v-if="row.language_stats">
+                      {{ getMainLanguage(row.language_stats) }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="total_files" label="文件数" width="100" />
+                <el-table-column prop="total_lines" label="代码行数" width="120" />
+                <el-table-column prop="clone_status" label="状态" width="100">
+                  <template #default="{ row }">
+                    <el-tag :type="row.clone_status === 'completed' ? 'success' : 'info'" size="small">
+                      {{ row.clone_status }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" width="180">
+                  <template #default="{ row }">
+                    <el-button size="small" @click="viewRepo(row.id)">查看</el-button>
+                    <el-button size="small" type="danger" @click="unlinkRepo(row.id)">取消关联</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+          </el-tab-pane>
+
+          <!-- 统一搜索 -->
+          <el-tab-pane label="🔍 统一搜索" name="search">
+            <UnifiedSearch :knowledge-base-id="knowledgeBaseId" />
+          </el-tab-pane>
+
+          <!-- 统一问答 -->
+          <el-tab-pane label="💬 智能问答" name="qa">
+            <UnifiedQA :knowledge-base-id="knowledgeBaseId" />
+          </el-tab-pane>
+        </el-tabs>
       </div>
     </el-card>
+
+    <!-- 关联代码仓库对话框 -->
+    <el-dialog
+      v-model="showLinkRepoDialog"
+      title="关联代码仓库"
+      width="500px"
+    >
+      <el-form :model="linkRepoForm" label-width="100px">
+        <el-form-item label="选择仓库">
+          <el-select v-model="linkRepoForm.repo_id" placeholder="请选择" style="width: 100%">
+            <el-option
+              v-for="repo in availableRepos"
+              :key="repo.id"
+              :label="repo.repo_name"
+              :value="repo.id"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <el-button @click="showLinkRepoDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleLinkRepo" :loading="linkingRepo">
+          确定
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -94,11 +171,19 @@
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox, ElMessage } from 'element-plus'
-import { Document as DocumentIcon, Folder, CircleCheck, Clock } from '@element-plus/icons-vue'
+import { Document as DocumentIcon, Folder, CircleCheck, Clock, Plus } from '@element-plus/icons-vue'
 import { getKnowledgeBaseDetail, deleteKnowledgeBase } from '@/api/modules/knowledge-bases'
 import { getDocuments } from '@/api/modules/documents'
+import { 
+  getKBRepositories, 
+  getRepositories,
+  linkRepositoryToKB,
+  unlinkRepositoryFromKB 
+} from '@/api/modules/code-repository'
 import { formatDateTime } from '@/utils/format'
 import type { KnowledgeBase, Document } from '@/types'
+import UnifiedSearch from '@/components/UnifiedSearch.vue'
+import UnifiedQA from '@/components/UnifiedQA.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -107,6 +192,19 @@ const knowledgeBaseId = Number(route.params.id)
 const detail = ref<KnowledgeBase | null>(null)
 const documents = ref<Document[]>([])
 const documentsLoading = ref(false)
+
+// 选项卡
+const activeTab = ref('documents')
+
+// 代码仓库相关
+const linkedRepos = ref<any[]>([])
+const reposLoading = ref(false)
+const showLinkRepoDialog = ref(false)
+const availableRepos = ref<any[]>([])
+const linkRepoForm = ref({
+  repo_id: null as number | null
+})
+const linkingRepo = ref(false)
 const docPage = ref(1)
 const docSize = ref(20)
 const docTotal = ref(0)
@@ -188,7 +286,100 @@ const getStatusText = (status: string) => {
 onMounted(() => {
   loadDetail()
   loadDocuments()
+  loadLinkedRepos()
 })
+
+// =============================================
+// 代码仓库相关方法
+// =============================================
+
+const loadLinkedRepos = async () => {
+  reposLoading.value = true
+  try {
+    // 获取关联到此知识库的代码仓库
+    const response = await getKBRepositories(knowledgeBaseId)
+    
+    if (response.code === 200) {
+      linkedRepos.value = response.data.items || []
+    }
+  } catch (error: any) {
+    console.error('加载关联仓库失败:', error)
+  } finally {
+    reposLoading.value = false
+  }
+}
+
+const loadAvailableRepos = async () => {
+  try {
+    // 获取所有未关联的代码仓库
+    const response = await getRepositories({
+      page_size: 100
+    })
+    
+    if (response.code === 200) {
+      availableRepos.value = response.data.items || []
+    }
+  } catch (error: any) {
+    console.error('加载可用仓库失败:', error)
+  }
+}
+
+const handleLinkRepo = async () => {
+  if (!linkRepoForm.value.repo_id) {
+    ElMessage.warning('请选择代码仓库')
+    return
+  }
+
+  linkingRepo.value = true
+  try {
+    const response = await linkRepositoryToKB(linkRepoForm.value.repo_id, knowledgeBaseId)
+    
+    if (response.code === 200) {
+      ElMessage.success('关联成功')
+      showLinkRepoDialog.value = false
+      loadLinkedRepos()
+    } else {
+      ElMessage.error(response.message || '关联失败')
+    }
+  } catch (error: any) {
+    console.error('关联仓库失败:', error)
+    ElMessage.error('关联失败: ' + (error.message || '未知错误'))
+  } finally {
+    linkingRepo.value = false
+  }
+}
+
+const unlinkRepo = async (repoId: number) => {
+  try {
+    await ElMessageBox.confirm('确定要取消关联此代码仓库吗？', '确认')
+    
+    const response = await unlinkRepositoryFromKB(repoId)
+    
+    if (response.code === 200) {
+      ElMessage.success('取消关联成功')
+      loadLinkedRepos()
+    } else {
+      ElMessage.error(response.message || '取消关联失败')
+    }
+  } catch (error: any) {
+    if (error !== 'cancel') {
+      console.error('取消关联失败:', error)
+      ElMessage.error('取消关联失败')
+    }
+  }
+}
+
+const viewRepo = (repoId: number) => {
+  router.push(`/code-repository/${repoId}`)
+}
+
+const getMainLanguage = (languageStats: Record<string, number>) => {
+  if (!languageStats) return '—'
+  const entries = Object.entries(languageStats)
+  if (entries.length === 0) return '—'
+  const sorted = entries.sort((a, b) => b[1] - a[1])
+  return sorted[0][0]
+}
 </script>
 
 <style lang="scss" scoped>

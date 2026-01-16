@@ -48,6 +48,21 @@ service.interceptors.response.use(
     if (res && typeof res === 'object' && 'code' in res) {
       if (res.code !== 200 && res.code !== 0 && res.code !== 201) {
         if (res.code === 401) {
+          // 401 未授权，清除认证信息并跳转登录
+          // 使用 Promise 异步处理，避免在响应拦截器中直接使用 async
+          Promise.resolve().then(async () => {
+            const { useUserStore } = await import('@/stores/modules/user')
+            const userStore = useUserStore()
+            userStore.clearAuth()
+            
+            // 避免在登录页面重复跳转
+            if (window.location.pathname !== '/login') {
+              const { default: router } = await import('@/router')
+              router.push('/login')
+              ElMessage.warning('登录已过期，请重新登录')
+            }
+          })
+          
           const authError = new Error(res.message || 'Not authenticated')
           Object.assign(authError, { isAuthError: true, code: 401 })
           return Promise.reject(authError)
@@ -104,7 +119,20 @@ service.interceptors.response.use(
           if (window.location.pathname !== '/login') {
             const { default: router } = await import('@/router')
             router.push('/login')
+            ElMessage.warning('登录已过期，请重新登录')
           }
+        }
+      } else {
+        // 没有 refresh_token 或已经重试过，直接跳转登录
+        const { useUserStore } = await import('@/stores/modules/user')
+        const userStore = useUserStore()
+        userStore.clearAuth()
+        
+        // 避免在登录页面重复跳转
+        if (window.location.pathname !== '/login') {
+          const { default: router } = await import('@/router')
+          router.push('/login')
+          ElMessage.warning('登录已过期，请重新登录')
         }
       }
     }

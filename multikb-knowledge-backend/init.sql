@@ -162,6 +162,257 @@ CREATE TABLE IF NOT EXISTS `documents` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='文档表';
 
 -- ============================================
+-- 3.5. 代码仓库表（2026-01-12 新增：代码库深度集成）
+-- ============================================
+CREATE TABLE IF NOT EXISTS `code_repositories` (
+    `id` INT NOT NULL AUTO_INCREMENT COMMENT '仓库ID',
+    `knowledge_base_id` INT NULL COMMENT '关联的知识库ID（可选）',
+    `kb_document_id` INT NULL COMMENT '对应的知识库文档ID（自动创建）',
+    `repo_url` VARCHAR(500) NOT NULL COMMENT 'GitHub仓库URL',
+    `repo_name` VARCHAR(255) NOT NULL COMMENT '仓库名称（owner/repo）',
+    `repo_type` VARCHAR(50) DEFAULT 'github' COMMENT '仓库类型',
+    `description` TEXT COMMENT '仓库描述',
+    `readme_content` LONGTEXT COMMENT 'README内容',
+    `tags` JSON COMMENT '标签',
+    `visibility` ENUM('public', 'private', 'internal') DEFAULT 'private' COMMENT '可见性',
+    
+    -- Git 信息
+    `default_branch` VARCHAR(100) DEFAULT 'main',
+    `last_commit_hash` VARCHAR(100),
+    `last_commit_date` DATETIME,
+    
+    -- 克隆状态
+    `local_path` VARCHAR(500) COMMENT '本地克隆路径（如：/data/code_repositories/1）',
+    `clone_status` VARCHAR(50) DEFAULT 'pending' COMMENT 'pending/cloning/completed/failed',
+    `clone_progress` FLOAT DEFAULT 0.0,
+    
+    -- 代码统计
+    `total_files` INT DEFAULT 0,
+    `total_lines` INT DEFAULT 0,
+    `language_stats` JSON COMMENT '语言统计',
+    
+    -- 解析状态
+    `parse_status` VARCHAR(50) DEFAULT 'pending',
+    `parse_progress` FLOAT DEFAULT 0.0,
+    
+    -- 时间戳
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_repo_name` (`repo_name`),
+    INDEX `idx_kb` (`knowledge_base_id`),
+    INDEX `idx_clone_status` (`clone_status`),
+    INDEX `idx_parse_status` (`parse_status`),
+    CONSTRAINT `fk_code_repo_kb` 
+        FOREIGN KEY (`knowledge_base_id`) 
+        REFERENCES `knowledge_bases` (`id`) 
+        ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci 
+COMMENT='代码仓库表';
+
+-- 3.6. 代码分析缓存表
+CREATE TABLE IF NOT EXISTS `code_analysis_cache` (
+    `id` INT NOT NULL AUTO_INCREMENT,
+    `repository_id` INT NOT NULL,
+    `cache_type` VARCHAR(50) NOT NULL COMMENT '缓存类型: structure/dependencies/summary/qa',
+    `cache_key` VARCHAR(255) NOT NULL COMMENT '缓存键（如文件路径、问题hash）',
+    `cache_data` JSON NOT NULL COMMENT '缓存数据',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `expires_at` DATETIME COMMENT '过期时间',
+    
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_repo_cache` (`repository_id`, `cache_type`, `cache_key`),
+    INDEX `idx_repository_id` (`repository_id`),
+    INDEX `idx_cache_type` (`cache_type`),
+    INDEX `idx_expires_at` (`expires_at`),
+    
+    FOREIGN KEY (`repository_id`) REFERENCES `code_repositories`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci 
+COMMENT='代码分析结果缓存表';
+
+-- 3.7. 代码文件表
+CREATE TABLE IF NOT EXISTS `code_files` (
+    `id` INT NOT NULL AUTO_INCREMENT COMMENT '文件ID',
+    `repository_id` INT NOT NULL COMMENT '仓库ID',
+    `knowledge_base_id` INT NULL COMMENT '知识库ID（冗余，便于查询）',
+    
+    -- 文件信息
+    `file_path` VARCHAR(1000) NOT NULL COMMENT '文件路径（相对路径）',
+    `file_name` VARCHAR(255) NOT NULL COMMENT '文件名',
+    `file_type` VARCHAR(50) COMMENT '文件类型',
+    `language` VARCHAR(50) COMMENT '编程语言',
+    
+    -- 内容信息
+    `content_hash` VARCHAR(64) COMMENT 'SHA256哈希（用于检测变更）',
+    `lines_of_code` INT COMMENT '代码行数',
+    `file_size` BIGINT COMMENT '文件大小（字节）',
+    
+    -- 分析结果
+    `symbols_count` INT DEFAULT 0 COMMENT '符号数量',
+    `imports_count` INT DEFAULT 0 COMMENT '导入数量',
+    `complexity_score` FLOAT COMMENT '平均复杂度',
+    
+    -- 向量化
+    `opensearch_doc_id` VARCHAR(100) COMMENT 'OpenSearch文档ID',
+    `vector_indexed` BOOLEAN DEFAULT FALSE COMMENT '是否已向量化',
+    `vector_updated_at` DATETIME COMMENT '向量更新时间',
+    
+    -- 时间戳
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `is_deleted` BOOLEAN DEFAULT FALSE,
+    
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_repo_path` (`repository_id`, `file_path`(255)),
+    INDEX `idx_kb` (`knowledge_base_id`),
+    INDEX `idx_language` (`language`),
+    INDEX `idx_vector_indexed` (`vector_indexed`),
+    INDEX `idx_hash` (`content_hash`),
+    CONSTRAINT `fk_file_repo` 
+        FOREIGN KEY (`repository_id`) 
+        REFERENCES `code_repositories` (`id`) 
+        ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci 
+COMMENT='代码文件表';
+
+-- 3.8. 代码符号表（函数、类等）
+CREATE TABLE IF NOT EXISTS `code_symbols` (
+    `id` INT NOT NULL AUTO_INCREMENT COMMENT '符号ID',
+    `file_id` INT NOT NULL COMMENT '文件ID',
+    `repository_id` INT NOT NULL COMMENT '仓库ID（冗余）',
+    `knowledge_base_id` INT NULL COMMENT '知识库ID（冗余）',
+    
+    -- 符号信息
+    `symbol_type` VARCHAR(50) NOT NULL COMMENT '符号类型: function/class/method/variable',
+    `symbol_name` VARCHAR(255) NOT NULL COMMENT '符号名称',
+    `qualified_name` VARCHAR(500) COMMENT '完整限定名',
+    `signature` TEXT COMMENT '函数签名/类声明',
+    
+    -- 位置信息
+    `start_line` INT COMMENT '起始行号',
+    `end_line` INT COMMENT '结束行号',
+    
+    -- 文档
+    `docstring` TEXT COMMENT '文档字符串',
+    `parameters` JSON COMMENT '参数列表',
+    `return_type` VARCHAR(100) COMMENT '返回类型',
+    
+    -- 关系
+    `parent_symbol_id` INT NULL COMMENT '父符号ID',
+    `modifiers` JSON COMMENT '修饰符（public/private/static）',
+    
+    -- 复杂度
+    `complexity_score` FLOAT COMMENT '圈复杂度',
+    `lines_count` INT COMMENT '代码行数',
+    
+    -- 向量化
+    `opensearch_doc_id` VARCHAR(100) COMMENT 'OpenSearch文档ID',
+    `vector_indexed` BOOLEAN DEFAULT FALSE,
+    `vector_updated_at` DATETIME COMMENT '向量更新时间',
+    
+    -- 时间戳
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `is_deleted` BOOLEAN DEFAULT FALSE,
+    
+    PRIMARY KEY (`id`),
+    INDEX `idx_file` (`file_id`),
+    INDEX `idx_repo` (`repository_id`),
+    INDEX `idx_kb` (`knowledge_base_id`),
+    INDEX `idx_type` (`symbol_type`),
+    INDEX `idx_name` (`symbol_name`),
+    INDEX `idx_parent` (`parent_symbol_id`),
+    INDEX `idx_vector_indexed` (`vector_indexed`),
+    CONSTRAINT `fk_symbol_file` 
+        FOREIGN KEY (`file_id`) 
+        REFERENCES `code_files` (`id`) 
+        ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci 
+COMMENT='代码符号表（函数、类等）';
+
+-- 3.9. 代码依赖关系表
+CREATE TABLE IF NOT EXISTS `code_dependencies` (
+    `id` INT NOT NULL AUTO_INCREMENT,
+    `repository_id` INT NOT NULL,
+    
+    -- 源和目标
+    `source_file_id` INT NOT NULL COMMENT '源文件ID',
+    `source_symbol_id` INT NULL COMMENT '源符号ID（可选）',
+    `target_file_id` INT NOT NULL COMMENT '目标文件ID',
+    `target_symbol_id` INT NULL COMMENT '目标符号ID（可选）',
+    
+    -- 依赖信息
+    `dependency_type` VARCHAR(50) NOT NULL COMMENT 'import/call/inherit/implement/reference',
+    `import_statement` TEXT COMMENT 'import语句原文',
+    `line_number` INT COMMENT '行号',
+    
+    -- 时间戳
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `is_deleted` BOOLEAN DEFAULT FALSE,
+    
+    PRIMARY KEY (`id`),
+    INDEX `idx_repo` (`repository_id`),
+    INDEX `idx_source_file` (`source_file_id`),
+    INDEX `idx_target_file` (`target_file_id`),
+    INDEX `idx_dep_type` (`dependency_type`),
+    CONSTRAINT `fk_dep_source` 
+        FOREIGN KEY (`source_file_id`) 
+        REFERENCES `code_files` (`id`) 
+        ON DELETE CASCADE,
+    CONSTRAINT `fk_dep_target` 
+        FOREIGN KEY (`target_file_id`) 
+        REFERENCES `code_files` (`id`) 
+        ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci 
+COMMENT='代码依赖关系表';
+
+-- 3.10. 代码-文档映射表
+CREATE TABLE IF NOT EXISTS `code_kb_mappings` (
+    `id` INT NOT NULL AUTO_INCREMENT,
+    `knowledge_base_id` INT NOT NULL COMMENT '知识库ID',
+    `document_id` INT NULL COMMENT '文档ID',
+    `code_file_id` INT NULL COMMENT '代码文件ID',
+    `code_symbol_id` INT NULL COMMENT '代码符号ID',
+    
+    -- 映射类型
+    `mapping_type` VARCHAR(50) NOT NULL COMMENT 'reference/implements/explains/example',
+    `mapping_context` TEXT COMMENT '映射上下文（如：文档中引用代码的段落）',
+    
+    -- 双向关联强度
+    `confidence_score` FLOAT DEFAULT 1.0 COMMENT '关联置信度',
+    
+    -- 时间戳
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `created_by` INT COMMENT '创建用户ID',
+    
+    PRIMARY KEY (`id`),
+    INDEX `idx_kb` (`knowledge_base_id`),
+    INDEX `idx_doc` (`document_id`),
+    INDEX `idx_code_file` (`code_file_id`),
+    INDEX `idx_code_symbol` (`code_symbol_id`),
+    INDEX `idx_mapping_type` (`mapping_type`),
+    CONSTRAINT `fk_mapping_kb` 
+        FOREIGN KEY (`knowledge_base_id`) 
+        REFERENCES `knowledge_bases` (`id`) 
+        ON DELETE CASCADE,
+    CONSTRAINT `fk_mapping_doc` 
+        FOREIGN KEY (`document_id`) 
+        REFERENCES `documents` (`id`) 
+        ON DELETE CASCADE,
+    CONSTRAINT `fk_mapping_file` 
+        FOREIGN KEY (`code_file_id`) 
+        REFERENCES `code_files` (`id`) 
+        ON DELETE CASCADE,
+    CONSTRAINT `fk_mapping_symbol` 
+        FOREIGN KEY (`code_symbol_id`) 
+        REFERENCES `code_symbols` (`id`) 
+        ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci 
+COMMENT='代码与文档映射关系表';
+
+-- ============================================
 -- 4. 文档分块表
 -- ============================================
 CREATE TABLE IF NOT EXISTS `document_chunks` (

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Vector Service
 根据文档处理流程设计实现向量生成和相似度计算功能
 """
@@ -27,7 +27,8 @@ class VectorService:
         如果 Ollama 不可用或返回空，降级为返回空列表，让上游继续索引文本（无向量）。
         """
         try:
-            logger.debug(f"开始生成文本向量，文本长度: {len(text)}")
+            # 移除详细日志，减少日志量
+            # logger.debug(f"开始生成文本向量，文本长度: {len(text)}")
             processed_text = self._preprocess_text(text)
 
             response = requests.post(
@@ -45,8 +46,6 @@ class VectorService:
             )
             if embedding is None:
                 embedding = []
-            raw_type = type(embedding).__name__
-            logger.info(f"[Embedding] raw type: {raw_type}")
             # 统一为 List[float]
             try:
                 # 字符串 -> JSON / split
@@ -73,18 +72,15 @@ class VectorService:
             except Exception as _ve:
                 logger.warning(f"向量格式修正失败，将视为无向量: {_ve}")
                 embedding = []
-            # 记录规范化后的关键信息
-            try:
-                preview = embedding[:5] if isinstance(embedding, list) else []
-                logger.info(
-                    f"[Embedding] normalized dim={len(embedding) if isinstance(embedding, list) else 0}, first5={preview}"
-                )
-            except Exception:
-                pass
+            
+            # 移除详细的向量值日志，减少日志量
+            # 只在向量为空时记录警告
             if not embedding:
                 logger.warning("Ollama返回空向量，降级为无向量索引")
                 return []
-            logger.debug(f"文本向量生成完成，向量维度: {len(embedding)}")
+            
+            # 只在 DEBUG 级别记录向量维度（不显示详细数值）
+            # logger.debug(f"文本向量生成完成，向量维度: {len(embedding)}")
             return embedding
         except requests.exceptions.RequestException as e:
             logger.warning(f"Ollama 不可用，降级为无向量索引: {e}")
@@ -283,7 +279,8 @@ class VectorService:
             
             # 长度限制（根据模型要求，与分块上限保持一致）
             from app.config.settings import settings as _settings
-            max_length = int(getattr(_settings, 'TEXT_EMBED_MAX_CHARS', 1024))
+            # 直接使用配置值，不使用 getattr 的默认值，确保使用最新的配置
+            max_length = _settings.TEXT_EMBED_MAX_CHARS
             if len(processed_text) > max_length:
                 processed_text = processed_text[:max_length]
                 logger.debug(f"文本长度超限，截断到 {max_length} 字符")

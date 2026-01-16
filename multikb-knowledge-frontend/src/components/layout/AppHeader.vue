@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <header class="app-header">
     <div class="header-left">
       <el-icon :size="20" @click="handleToggleSidebar">
@@ -58,13 +58,13 @@ const handleCommand = async (command: string) => {
 .app-header {
   height: 60px;
   padding: 0 20px;
-  background: rgba(255, 255, 255, 0.05);
+  background: #ffffff;
   backdrop-filter: blur(10px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid #e4e7ed;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  color: #e4e7ed;
+  color: #303133;
 
   .header-left {
     display: flex;
@@ -97,7 +97,7 @@ const handleCommand = async (command: string) => {
   .header-right {
     display: flex;
     align-items: center;
-    color: rgba(255, 255, 255, 0.7);
+    color: #606266;
 
     .user-info {
       display: flex;
@@ -109,7 +109,7 @@ const handleCommand = async (command: string) => {
       transition: all 0.3s ease;
 
       &:hover {
-        background: rgba(64, 158, 255, 0.2);
+        background: #f0f9ff;
       }
 
       .username {

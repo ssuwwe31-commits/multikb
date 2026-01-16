@@ -58,7 +58,7 @@ async def create_entity(
         entity_data,
         int(current_user.get("sub"))
     )
-    return success_response(message="实体创建成功", data=EntityResponse.model_validate(entity).model_dump()).model_dump()
+    return success_response("实体创建成功", EntityResponse.model_validate(entity).model_dump())
 
 
 @router.get("/entities", response_model=dict)
@@ -112,7 +112,7 @@ async def get_entity_detail(
         logger.error(f"[get_entity_detail] 数据格式错误: 实体ID={entity_id}, detail={detail}")
         raise HTTPException(status_code=500, detail="实体详情数据格式错误")
     
-    response = success_response(message="获取成功", data=detail).model_dump()
+    response = success_response("获取成功", detail)
     logger.debug(f"[get_entity_detail] 实体ID={entity_id}, 返回成功")
     return response
 
@@ -127,7 +127,7 @@ async def update_entity(
     """更新实体"""
     service = KnowledgeGraphService(db)
     entity = service.update_entity(entity_id, entity_data, int(current_user.get("sub")))
-    return success_response(message="实体更新成功", data=EntityResponse.model_validate(entity).model_dump()).model_dump()
+    return success_response("实体更新成功", EntityResponse.model_validate(entity).model_dump())
 
 
 @router.delete("/entities/{entity_id}", response_model=dict)
@@ -139,7 +139,7 @@ async def delete_entity(
     """删除实体"""
     service = KnowledgeGraphService(db)
     service.delete_entity(entity_id, int(current_user.get("sub")))
-    return success_response(message="实体删除成功").model_dump()
+    return success_response("实体删除成功")
 
 
 @router.post("/entities/batch", response_model=dict)
@@ -157,8 +157,8 @@ async def batch_create_entities(
             entity_data,
             int(current_user.get("sub"))
         )
-        created_entities.append(EntityResponse.model_validate(entity).model_dump())
-    return success_response(message="批量创建成功", data={"entities": created_entities}).model_dump()
+        created_entities.append(EntityResponse.model_validate(entity))
+    return success_response("批量创建成功", {"entities": created_entities})
 
 
 @router.put("/entities/batch", response_model=dict)
@@ -176,8 +176,8 @@ async def batch_update_entities(
             continue
         update_data = EntityUpdate(**{k: v for k, v in entity_update.items() if k != "id"})
         entity = service.update_entity(entity_id, update_data, int(current_user.get("sub")))
-        updated_entities.append(EntityResponse.model_validate(entity).model_dump())
-    return success_response(message="批量更新成功", data={"entities": updated_entities}).model_dump()
+        updated_entities.append(EntityResponse.model_validate(entity))
+    return success_response("批量更新成功", {"entities": updated_entities})
 
 
 @router.delete("/entities/batch", response_model=dict)
@@ -196,7 +196,7 @@ async def batch_delete_entities(
         except Exception as e:
             # 记录错误但继续处理其他实体
             pass
-    return success_response(message="批量删除成功", data={"deleted_count": deleted_count}).model_dump()
+    return success_response("批量删除成功", {"deleted_count": deleted_count})
 
 
 @router.post("/entities/merge", response_model=dict)
@@ -212,7 +212,7 @@ async def merge_entities(
         merge_data.target_entity_id,
         int(current_user.get("sub"))
     )
-    return success_response(message="实体合并成功", data=EntityResponse.model_validate(merged_entity).model_dump()).model_dump()
+    return success_response("实体合并成功", EntityResponse.model_validate(merged_entity).model_dump())
 
 
 # ============================================
@@ -232,7 +232,7 @@ async def create_relationship(
         relationship_data,
         int(current_user.get("sub"))
     )
-    return success_response(message="关系创建成功", data=RelationshipResponse.model_validate(relationship).model_dump()).model_dump()
+    return success_response("关系创建成功", RelationshipResponse.model_validate(relationship).model_dump())
 
 
 @router.get("/relationships", response_model=dict)
@@ -281,7 +281,7 @@ async def get_relationship_detail(
     """获取关系详情"""
     service = KnowledgeGraphService(db)
     detail = service.get_relationship_detail(relationship_id, int(current_user.get("sub")))
-    return success_response(message="获取成功", data=detail).model_dump()
+    return success_response("获取成功", detail)
 
 
 @router.put("/relationships/{relationship_id}", response_model=dict)
@@ -294,7 +294,7 @@ async def update_relationship(
     """更新关系"""
     service = KnowledgeGraphService(db)
     relationship = service.update_relationship(relationship_id, relationship_data, int(current_user.get("sub")))
-    return success_response(message="关系更新成功", data=RelationshipResponse.model_validate(relationship).model_dump()).model_dump()
+    return success_response("关系更新成功", RelationshipResponse.model_validate(relationship).model_dump())
 
 
 @router.delete("/relationships/{relationship_id}", response_model=dict)
@@ -306,7 +306,7 @@ async def delete_relationship(
     """删除关系"""
     service = KnowledgeGraphService(db)
     service.delete_relationship(relationship_id, int(current_user.get("sub")))
-    return success_response(message="关系删除成功").model_dump()
+    return success_response("关系删除成功")
 
 
 # ============================================
@@ -330,7 +330,7 @@ async def find_paths(
         path_query.relation_types,
         int(current_user.get("sub"))
     )
-    return success_response(message="路径查询成功", data={"paths": paths}).model_dump()
+    return success_response("路径查询成功", {"paths": paths})
 
 
 @router.get("/entities/{entity_id}/neighbors", response_model=dict)
@@ -353,7 +353,7 @@ async def get_entity_neighbors(
         limit,
         int(current_user.get("sub"))
     )
-    return success_response(message="获取成功", data=neighbors).model_dump()
+    return success_response("获取成功", neighbors)
 
 
 @router.get("/search", response_model=dict)
@@ -368,7 +368,7 @@ async def search_entities(
     """搜索实体"""
     service = KnowledgeGraphService(db)
     entities = service.search_entities(q, knowledge_base_id, type, int(current_user.get("sub")), limit)
-    return success_response(message="搜索成功", data={"entities": entities}).model_dump()
+    return success_response("搜索成功", {"entities": entities})
 
 
 @router.get("/visualization", response_model=dict)
@@ -406,7 +406,7 @@ async def get_visualization_data(
         layout,
         int(current_user.get("sub"))
     )
-    return success_response(message="获取成功", data=data).model_dump()
+    return success_response("获取成功", data)
 
 
 # ============================================
@@ -466,7 +466,7 @@ async def extract_entities(
             "tasks": task_ids,
             "total": len(task_ids)
         }
-    ).model_dump()
+    )
 
 
 @router.post("/extract/document/{document_id}", response_model=dict)
@@ -514,10 +514,10 @@ async def extract_from_document(
     
     task = extract_entities_from_document_task.delay(document_id, int(current_user.get("sub")), entity_type_mode, entity_type_codes)
     
-    return success_response(message="提取任务已创建", data={
+    return success_response("提取任务已创建", {
         "task_id": task.id,
         "document_id": document_id
-    }).model_dump()
+    })
 
 
 @router.get("/extract/tasks", response_model=dict)
@@ -557,12 +557,12 @@ async def list_extraction_tasks(
         return success_response(
             message="获取成功",
             data={
-                "tasks": [ExtractionTaskResponse.model_validate(task).model_dump() for task in tasks],
+                "tasks": [ExtractionTaskResponse.model_validate(task) for task in tasks],
                 "total": total,
                 "page": page,
                 "size": size
             }
-        ).model_dump()
+        )
     except Exception as e:
         logger.error(f"[获取任务列表] 查询失败: 知识库ID={knowledge_base_id}, 错误={e}", exc_info=True)
         raise
@@ -598,7 +598,7 @@ async def get_extraction_task(
         
         logger.info(f"[获取任务详情] 查询成功: 任务ID={task_id}, 状态={task.status}, 实体数={task.total_entities}, 关系数={task.total_relationships}")
         
-        return success_response(message="获取成功", data=ExtractionTaskResponse.model_validate(task).model_dump()).model_dump()
+        return success_response("获取成功", ExtractionTaskResponse.model_validate(task).model_dump())
     except Exception as e:
         if isinstance(e, HTTPException):
             raise
@@ -782,7 +782,7 @@ async def delete_extraction_task(
         
         logger.info(f"[删除任务] 任务 {task_id} 删除完成")
         
-        return success_response(message="任务删除成功").model_dump()
+        return success_response("任务删除成功")
     except Exception as e:
         logger.error(f"[删除任务] 删除任务失败: 任务ID={task_id}, 错误={e}", exc_info=True)
         db.rollback()
@@ -989,7 +989,7 @@ async def regenerate_extraction_task(
                 "new_task_id": new_task.id,
                 "document_id": document_id
             }
-        ).model_dump()
+        )
     except Exception as e:
         logger.error(f"[重新生成任务] 重新生成任务失败: 任务ID={task_id}, 文档ID={document_id}, 错误={e}", exc_info=True)
         db.rollback()
@@ -1009,7 +1009,7 @@ async def get_graph_stats(
     """获取知识图谱统计信息"""
     service = KnowledgeGraphService(db)
     stats = service.get_graph_stats(knowledge_base_id, int(current_user.get("sub")))
-    return success_response(message="获取成功", data=stats).model_dump()
+    return success_response("获取成功", stats)
 
 
 @router.post("/cleanup/orphaned-data", response_model=dict)
@@ -1125,7 +1125,7 @@ async def cleanup_orphaned_data(
                 "deleted_count": deleted_count,
                 "failed_count": failed_count
             }
-        ).model_dump()
+        )
     except Exception as e:
         logger.error(f"[清理孤立数据] 清理失败: {e}", exc_info=True)
         raise
