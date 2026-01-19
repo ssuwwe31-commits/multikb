@@ -48,8 +48,8 @@ class CodeAnalyzerService:
         self.statistics_analyzer = CodeStatisticsAnalyzer()
         self.diagram_generator = CodeDiagramGenerator()
         self.quality_analyzer = CodeQualityAnalyzer(is_minified_file_func=self._is_minified_file)
-        self.architecture_analyzer = CodeArchitectureAnalyzer(diagram_generator=self.diagram_generator)
-        self.wiki_generator = CodeWikiGenerator(architecture_analyzer=self.architecture_analyzer)
+        self.architecture_analyzer = CodeArchitectureAnalyzer(diagram_generator=self.diagram_generator, db=None, repository_id=None)
+        self.wiki_generator = CodeWikiGenerator(architecture_analyzer=self.architecture_analyzer, db=None, repository_id=None)
         # 注意：OllamaService 需要 db 参数，这里先不初始化
         # 将在实际调用时动态创建
         logger.info("代码分析服务初始化完成（已使用拆分后的模块）")
@@ -87,8 +87,21 @@ class CodeAnalyzerService:
         
         logger.info(f"成功解析 {len(analyzed_files)} 个文件")
         
-        # 3. 统计信息（使用拆分后的模块）
-        statistics = self.statistics_analyzer.calculate_statistics(analyzed_files)
+        # 3. 统计信息（使用拆分后的模块，传递 repo_path 以支持 LLM 增强）
+        statistics = self.statistics_analyzer.calculate_statistics(analyzed_files, repo_path=repo_path)
+        
+        # 3.5. 如果规则检测未发现 API 端点，使用架构提取的 LLM 增强结果更新统计
+        if statistics.get('api_endpoints', {}).get('backend', 0) == 0:
+            logger.info(f"[API统计] 规则检测未发现后端端点，尝试使用架构提取的 LLM 增强结果...")
+            try:
+                external_services = statistics.get('external_services', [])
+                arch_details = self.architecture_analyzer.extract_architecture_details(analyzed_files, repo_path, external_services)
+                llm_endpoints_count = len(arch_details.get('api_endpoints_detail', []))
+                if llm_endpoints_count > 0:
+                    statistics['api_endpoints']['backend'] = llm_endpoints_count
+                    logger.info(f"[API统计] ✅ 使用架构提取的 LLM 增强结果更新统计: {llm_endpoints_count} 个后端端点")
+            except Exception as e:
+                logger.warning(f"[API统计] 使用架构提取结果更新统计失败: {e}")
         
         # 4. 构建依赖关系图
         dependencies = self._build_dependency_graph(analyzed_files, repo_path)
@@ -170,12 +183,13 @@ class CodeAnalyzerService:
         """
         return self.statistics_analyzer.calculate_statistics(analyzed_files)
     
-    def _count_api_endpoints(self, analyzed_files: List[Dict]) -> Dict:
+    def _count_api_endpoints(self, analyzed_files: List[Dict], repo_path: str = None) -> Dict:
         """
-        统计 API 端点数量（使用深度静态分析）
+        统计 API 端点数量（使用深度静态分析 + LLM 增强）
         
         Args:
             analyzed_files: 已分析的文件列表
+            repo_path: 仓库路径（可选，用于 LLM 增强检测）
             
         Returns:
             API 统计信息 {'frontend': int, 'backend': int}
@@ -183,7 +197,9 @@ class CodeAnalyzerService:
         frontend_count = 0
         backend_count = 0
         frontend_files = []  # 调试：记录被识别为前端的文件
+        backend_files_checked = []  # 调试：记录检查过的后端文件
         
+        # 第一轮：规则检测
         for file_data in analyzed_files:
             file_path = file_data.get('file_path', '')
             language = file_data.get('language', '')
@@ -198,6 +214,35 @@ class CodeAnalyzerService:
             if self._is_backend_api_file(file_path, language):
                 count = self._count_backend_endpoints_precise(file_data)
                 backend_count += count
+                backend_files_checked.append((file_path, language, count))
+        
+        # 第二轮：如果规则检测结果较少，使用 LLM 增强检测（仅后端）
+        if backend_count == 0 and repo_path:
+            logger.info(f"[API统计] 规则检测未发现后端端点，尝试使用 LLM 增强检测...")
+            llm_backend_count = 0
+            
+            # 检查看起来像路由文件但规则检测为0的文件
+            for file_data in analyzed_files:
+                file_path = file_data.get('file_path', '')
+                language = file_data.get('language', '')
+                
+                # 如果文件看起来像路由文件（包含 handler, route 等），但规则检测为0
+                path_lower = file_path.lower()
+                looks_like_route = any(kw in path_lower for kw in ['handler', 'route', 'api', 'endpoint'])
+                
+                if looks_like_route and language == 'python':
+                    # 使用 LLM 增强检测
+                    try:
+                        endpoints = self.architecture_analyzer.extract_api_endpoints_with_llm(file_data, repo_path)
+                        if endpoints:
+                            llm_backend_count += len(endpoints)
+                            logger.info(f"[API统计] LLM 在文件 {file_path} 中检测到 {len(endpoints)} 个端点")
+                    except Exception as e:
+                        logger.debug(f"[API统计] LLM 检测文件 {file_path} 失败: {e}")
+            
+            if llm_backend_count > 0:
+                backend_count = llm_backend_count
+                logger.info(f"[API统计] LLM 增强检测补充了 {llm_backend_count} 个后端端点")
         
         # 调试日志
         if frontend_files:
@@ -209,6 +254,9 @@ class CodeAnalyzerService:
             # 显示一些 TypeScript/JavaScript 文件路径作为参考
             ts_js_files = [f for f in analyzed_files if f.get('language') in ['typescript', 'javascript', 'tsx', 'jsx']][:10]
             logger.debug(f"示例 TS/JS 文件路径: {[f.get('file_path') for f in ts_js_files]}")
+        
+        if backend_files_checked:
+            logger.debug(f"规则检测检查了 {len(backend_files_checked)} 个后端文件，发现 {backend_count} 个端点")
         
         logger.info(f"API 统计完成 - 前端: {frontend_count}, 后端: {backend_count}")
         return {
@@ -340,12 +388,19 @@ class CodeAnalyzerService:
         file_path_normalized = file_path.replace('\\', '/')
         file_path_lower = file_path_normalized.lower()
         
+        # 后端 API 文件关键词（扩展：包含 handler, service 等）
+        backend_keywords = [
+            'api', 'views', 'routes', 'endpoints', 'controller', 
+            'handler', 'handlers',  # 添加 handler 支持
+            'service', 'services'  # 某些框架使用 service 作为 API 层
+        ]
+        
         if language == 'python':
-            return any(keyword in file_path_lower for keyword in ['api', 'views', 'routes', 'endpoints', 'controller'])
+            return any(keyword in file_path_lower for keyword in backend_keywords)
         elif language in ['javascript', 'typescript']:
-            return any(keyword in file_path_lower for keyword in ['controller', 'api', 'routes', 'endpoints'])
+            return any(keyword in file_path_lower for keyword in backend_keywords)
         elif language == 'java':
-            return 'controller' in file_path_lower
+            return any(keyword in file_path_lower for keyword in ['controller', 'handler', 'api'])
         
         return False
     
@@ -1165,6 +1220,8 @@ class CodeAnalyzerService:
             import requests
             from app.config.settings import settings
             
+            logger.info(f"[LLM调用] 项目摘要生成使用模型 {settings.CODE_LLM_MODEL}, prompt 长度: {len(prompt)} 字符")
+            
             # 直接调用 Ollama API
             response = requests.post(
                 f"{settings.OLLAMA_BASE_URL}/api/generate",
@@ -1180,10 +1237,10 @@ class CodeAnalyzerService:
             summary = result.get("response", "").strip()
             
             if summary:
-                logger.info(f"LLM 生成摘要成功，长度: {len(summary)} 字符")
+                logger.info(f"[LLM调用] 项目摘要生成成功，响应长度: {len(summary)} 字符")
                 return summary
             else:
-                logger.warning("LLM 返回空摘要，使用默认摘要")
+                logger.warning("[LLM调用] 项目摘要生成返回空内容，使用默认摘要")
                 return self._generate_default_summary(statistics)
                 
         except Exception as e:

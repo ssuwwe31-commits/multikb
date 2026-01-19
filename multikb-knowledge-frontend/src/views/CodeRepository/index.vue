@@ -16,6 +16,8 @@
         :data="repositories"
         v-loading="loading"
         style="width: 100%"
+        :cell-style="{ padding: '16px 12px' }"
+        :header-cell-style="{ background: '#f5f7fa', color: '#606266', fontWeight: '600' }"
       >
         <el-table-column prop="repo_name" label="仓库名称" min-width="200">
           <template #default="{ row }">
@@ -37,45 +39,57 @@
 
         <el-table-column prop="default_branch" label="分支" width="100" />
 
-        <el-table-column label="克隆状态" width="120">
+        <el-table-column label="克隆状态" width="130">
           <template #default="{ row }">
-            <el-tag :type="getStatusType(row.clone_status)">
-              {{ getStatusText(row.clone_status) }}
-            </el-tag>
-            <el-progress
-              v-if="row.clone_status === 'cloning'"
-              :percentage="Math.round(row.clone_progress * 100)"
-              :show-text="false"
-              style="margin-top: 5px"
-            />
+            <div class="status-cell">
+              <el-tag :type="getStatusType(row.clone_status)" class="status-tag">
+                {{ getStatusText(row.clone_status) }}
+              </el-tag>
+              <el-progress
+                v-if="row.clone_status === 'cloning'"
+                :percentage="Math.round(row.clone_progress * 100)"
+                :show-text="false"
+                class="status-progress"
+              />
+            </div>
           </template>
         </el-table-column>
 
-        <el-table-column label="解析状态" width="120">
+        <el-table-column label="解析状态" width="130">
           <template #default="{ row }">
-            <el-tag :type="getStatusType(row.parse_status)">
-              {{ getStatusText(row.parse_status) }}
-            </el-tag>
-            <el-progress
-              v-if="row.parse_status === 'parsing'"
-              :percentage="Math.round(row.parse_progress * 100)"
-              :show-text="false"
-              style="margin-top: 5px"
-            />
+            <div class="status-cell">
+              <el-tag :type="getStatusType(row.parse_status)" class="status-tag">
+                {{ getStatusText(row.parse_status) }}
+              </el-tag>
+              <el-progress
+                v-if="row.parse_status === 'parsing'"
+                :percentage="Math.round(row.parse_progress * 100)"
+                :show-text="false"
+                class="status-progress"
+              />
+            </div>
           </template>
         </el-table-column>
 
-        <el-table-column label="统计信息" width="200">
+        <el-table-column label="统计信息" min-width="240">
           <template #default="{ row }">
             <div class="stats">
-              <span>文件: {{ row.total_files }}</span>
-              <span>代码行: {{ row.total_lines }}</span>
-              <div class="languages">
+              <div class="stats-summary">
+                <span class="stat-item">
+                  <span class="stat-label">文件:</span>
+                  <span class="stat-value">{{ row.total_files || 0 }}</span>
+                </span>
+                <span class="stat-item">
+                  <span class="stat-label">代码行:</span>
+                  <span class="stat-value">{{ row.total_lines || 0 }}</span>
+                </span>
+              </div>
+              <div class="languages" v-if="row.language_stats && Object.keys(row.language_stats).length > 0">
                 <el-tag
                   v-for="(count, lang) in row.language_stats"
                   :key="lang"
                   size="small"
-                  style="margin-right: 5px"
+                  class="language-tag"
                 >
                   {{ lang }}: {{ count }}
                 </el-tag>
@@ -84,26 +98,30 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
-            <el-button
-              v-if="row.clone_status === 'completed' && row.parse_status === 'completed'"
-              type="primary"
-              size="small"
-              @click="viewRepository(row)"
-              :disabled="row.is_deleted || deletingRepoIds.has(row.id)"
-            >
-              查看分析
-            </el-button>
-            <el-button
-              type="danger"
-              size="small"
-              @click="handleDelete(row)"
-              :disabled="row.is_deleted || deletingRepoIds.has(row.id)"
-              :loading="deletingRepoIds.has(row.id)"
-            >
-              {{ deletingRepoIds.has(row.id) ? '删除中...' : '删除' }}
-            </el-button>
+            <div class="action-buttons">
+              <el-button
+                v-if="row.clone_status === 'completed' && row.parse_status === 'completed'"
+                type="primary"
+                size="small"
+                class="action-btn"
+                @click="viewRepository(row)"
+                :disabled="row.is_deleted || deletingRepoIds.has(row.id)"
+              >
+                查看分析
+              </el-button>
+              <el-button
+                type="danger"
+                size="small"
+                class="action-btn"
+                @click="handleDelete(row)"
+                :disabled="row.is_deleted || deletingRepoIds.has(row.id)"
+                :loading="deletingRepoIds.has(row.id)"
+              >
+                {{ deletingRepoIds.has(row.id) ? '删除中...' : '删除' }}
+              </el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -382,17 +400,108 @@ onMounted(() => {
   }
 
   .list-card {
+    :deep(.el-table) {
+      .el-table__cell {
+        padding: 16px 12px;
+      }
+    }
+
     .stats {
       display: flex;
       flex-direction: column;
-      gap: 5px;
-      font-size: 12px;
+      gap: 10px;
+      font-size: 13px;
+      line-height: 1.5;
+
+      .stats-summary {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-bottom: 2px;
+
+        .stat-item {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          color: #606266;
+
+          .stat-label {
+            color: #909399;
+            font-weight: 500;
+            min-width: 50px;
+          }
+
+          .stat-value {
+            color: #303133;
+            font-weight: 600;
+          }
+        }
+      }
 
       .languages {
         display: flex;
         flex-wrap: wrap;
-        gap: 5px;
-        margin-top: 5px;
+        gap: 6px;
+        margin-top: 4px;
+        padding-top: 8px;
+        border-top: 1px solid #ebeef5;
+
+        .language-tag {
+          margin: 0;
+          border-radius: 4px;
+          font-size: 11px;
+          padding: 2px 8px;
+          height: 22px;
+          line-height: 18px;
+          transition: all 0.2s;
+
+          &:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+          }
+        }
+      }
+    }
+
+    .status-cell {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      align-items: flex-start;
+
+      .status-tag {
+        border-radius: 4px;
+        font-weight: 500;
+        padding: 4px 10px;
+        font-size: 12px;
+      }
+
+      .status-progress {
+        width: 100%;
+        margin-top: 4px;
+      }
+    }
+
+    .action-buttons {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+
+      .action-btn {
+        border-radius: 4px;
+        font-weight: 500;
+        transition: all 0.2s;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+
+        &:not(:disabled):hover {
+          transform: translateY(-1px);
+          box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+        }
+
+        &:not(:disabled):active {
+          transform: translateY(0);
+        }
       }
     }
   }

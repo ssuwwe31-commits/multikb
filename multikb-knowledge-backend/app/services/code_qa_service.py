@@ -12,6 +12,9 @@ from app.core.logging import logger
 from app.services.code_parser_service import CodeParserService
 from app.services.question_classifier import get_question_classifier
 from app.services.rerank_service import RerankService
+from app.services.log_parser import LogParser
+from app.services.llm_enhancement_service import LLMEnhancementService
+from app.services.code_qa_tools_definitions import CODE_QA_TOOLS
 from app.config.settings import settings
 from sqlalchemy.orm import Session
 
@@ -53,6 +56,21 @@ class CodeQAService:
         # 初始化 Rerank 服务（用于搜索结果精排）
         self.rerank_service = RerankService()
         logger.info("代码问答服务初始化完成，已启用 Rerank 服务")
+        
+        # 初始化日志解析器（用于日志信息定位代码）
+        self.log_parser = LogParser()
+        logger.info("代码问答服务初始化完成，已启用日志解析器")
+        
+        # 初始化 LLM 增强服务（用于 Function Calling）
+        self.llm_enhancement_service = LLMEnhancementService(db=db, repository_id=None)
+        logger.info("代码问答服务初始化完成，已启用 Function Calling 支持")
+        
+        # 当前仓库路径（供工具函数使用）
+        self.current_repo_path: Optional[str] = None
+        
+        # 初始化 LLM 增强服务（用于 Function Calling）
+        self.llm_enhancement_service = LLMEnhancementService(db=db, repository_id=None)
+        logger.info("代码问答服务初始化完成，已启用 Function Calling 支持")
     
     async def answer_question(
         self, 
@@ -61,7 +79,8 @@ class CodeQAService:
         context_files: Optional[List[str]] = None,
         max_context_files: int = 5,
         use_vector_search: bool = True,
-        use_rerank: bool = True
+        use_rerank: bool = True,
+        use_function_calling: bool = False
     ) -> Dict:
         """
         回答关于代码的问题（支持向量搜索和 Rerank 精排）
@@ -96,9 +115,232 @@ class CodeQAService:
         else:
             question_type = 'general'
         
-        # 2. 选择相关文件（优先使用混合搜索：向量 + 关键词 + Rerank）
+        # 1.5 新增：如果是日志相关的问题，解析日志
+        log_info = None
+        if self._is_log_related_question(question):
+            try:
+                log_info = self.log_parser.parse_log_message(question)
+                if log_info and (log_info.get('file_paths') or log_info.get('function_names') or log_info.get('class_names')):
+                    logger.info(f"解析日志信息成功: 文件={log_info.get('file_paths')}, 函数={log_info.get('function_names')}, 类={log_info.get('class_names')}")
+            except Exception as e:
+                logger.warning(f"日志解析失败: {e}")
+                log_info = None
+        
+        # 2. 选择使用 Function Calling 还是传统 Prompt 方式
+        if use_function_calling and self.db:
+            # 使用 Function Calling 方式
+            return await self._answer_with_function_calling(
+                repo_path, question, log_info, question_type, classification_result, 
+                context_files, max_context_files, use_rerank
+            )
+        else:
+            # 使用传统 Prompt 方式（原有逻辑）
+            return await self._answer_with_prompt(
+                repo_path, question, log_info, question_type, classification_result,
+                context_files, max_context_files, use_vector_search, use_rerank
+            )
+    
+    async def _answer_with_function_calling(
+        self,
+        repo_path: str,
+        question: str,
+        log_info: Optional[Dict],
+        question_type: str,
+        classification_result: Optional[Dict],
+        context_files: Optional[List[str]],
+        max_context_files: int,
+        use_rerank: bool
+    ) -> Dict:
+        """使用 Function Calling 方式回答问题"""
+        try:
+            # 保存仓库路径，供工具函数使用
+            self.current_repo_path = repo_path
+            
+            # 构建初始 Prompt（包含日志解析结果）
+            initial_prompt = self._build_function_calling_prompt(question, log_info, question_type)
+            
+            # 多轮对话循环
+            messages = [
+                {"role": "system", "content": self.CODE_QA_SYSTEM_PROMPT},
+                {"role": "user", "content": initial_prompt}
+            ]
+            
+            max_iterations = 5  # 最多 5 轮对话
+            iteration = 0
+            collected_files = set(context_files) if context_files else set()
+            collected_context = []  # 收集的代码上下文
+            
+            while iteration < max_iterations:
+                iteration += 1
+                logger.info(f"Function Calling 第 {iteration} 轮对话")
+                
+                # 调用 LLM with Function Calling
+                try:
+                    import requests
+                    from app.config.settings import settings
+                    
+                    response = requests.post(
+                        f"{settings.OLLAMA_BASE_URL}/api/chat",
+                        json={
+                            "model": settings.CODE_LLM_MODEL,
+                            "messages": messages,
+                            "tools": CODE_QA_TOOLS,
+                            "tool_choice": "auto",
+                            "options": {
+                                "temperature": 0.1,
+                                "top_p": 0.9,
+                                "num_predict": 4000
+                            }
+                        },
+                        timeout=120
+                    )
+                    response.raise_for_status()
+                    result = response.json()
+                    
+                    message = result.get('message', {})
+                    tool_calls = message.get('tool_calls', [])
+                    content = message.get('content', '').strip()
+                    
+                    # 如果没有工具调用，说明 LLM 已经准备好回答
+                    if not tool_calls and content:
+                        # 添加 LLM 的回复到消息历史
+                        messages.append({"role": "assistant", "content": content})
+                        
+                        # 使用 LLM 的回复作为最终答案
+                        final_answer = content
+                        
+                        # 如果答案太短，尝试从对话历史构建更完整的答案
+                        if len(final_answer) < 50:
+                            final_answer = self._build_final_answer_from_conversation(
+                                messages, collected_context, question, log_info
+                            )
+                        
+                        return {
+                            'answer': final_answer,
+                            'sources': list(collected_files),
+                            'question': question,
+                            'question_type': question_type,
+                            'classification': classification_result,
+                            'method': 'function_calling',
+                            'iterations': iteration
+                        }
+                    
+                    # 处理工具调用
+                    tool_results = []
+                    for tool_call in tool_calls:
+                        function = tool_call.get('function', {})
+                        function_name = function.get('name')
+                        arguments = function.get('arguments', {})
+                        
+                        # 解析 arguments（可能是字符串）
+                        if isinstance(arguments, str):
+                            import json
+                            try:
+                                arguments = json.loads(arguments)
+                            except:
+                                logger.warning(f"无法解析工具参数: {arguments}")
+                                continue
+                        
+                        # 执行工具
+                        try:
+                            tool_result = await self._execute_qa_tool(
+                                function_name, arguments, repo_path
+                            )
+                            tool_results.append({
+                                'tool_call_id': tool_call.get('id'),
+                                'name': function_name,
+                                'result': tool_result
+                            })
+                            
+                            # 收集文件路径
+                            if isinstance(tool_result, dict):
+                                if 'file_path' in tool_result:
+                                    collected_files.add(tool_result['file_path'])
+                                if 'file_paths' in tool_result:
+                                    collected_files.update(tool_result['file_paths'])
+                                if 'content' in tool_result:
+                                    collected_context.append(tool_result)
+                        
+                        except Exception as e:
+                            logger.error(f"执行工具 {function_name} 失败: {e}", exc_info=True)
+                            tool_results.append({
+                                'tool_call_id': tool_call.get('id'),
+                                'name': function_name,
+                                'result': {'error': str(e)}
+                            })
+                    
+                    # 添加工具调用结果到消息历史
+                    messages.append({
+                        "role": "assistant",
+                        "content": content,
+                        "tool_calls": tool_calls
+                    })
+                    
+                    # 添加工具结果（Ollama 格式：每个工具调用一个消息）
+                    for tr in tool_results:
+                        import json
+                        messages.append({
+                            "role": "tool",
+                            "name": tr['name'],
+                            "content": json.dumps(tr['result'], ensure_ascii=False)
+                        })
+                    
+                except Exception as e:
+                    logger.error(f"Function Calling 对话失败: {e}", exc_info=True)
+                    # 降级到传统方式
+                    return await self._answer_with_prompt(
+                        repo_path, question, log_info, question_type, classification_result,
+                        list(collected_files) if collected_files else None,
+                        max_context_files, True, use_rerank
+                    )
+            
+            # 如果达到最大迭代次数，使用收集的上下文生成最终答案
+            logger.warning(f"Function Calling 达到最大迭代次数 {max_iterations}，生成最终答案")
+            final_answer = self._build_final_answer_from_conversation(
+                messages, collected_context, question, log_info
+            )
+            
+            return {
+                'answer': final_answer,
+                'sources': list(collected_files),
+                'question': question,
+                'question_type': question_type,
+                'classification': classification_result,
+                'method': 'function_calling',
+                'iterations': iteration
+            }
+            
+        except Exception as e:
+            logger.error(f"Function Calling 方式失败: {e}", exc_info=True)
+            # 降级到传统方式
+            return await self._answer_with_prompt(
+                repo_path, question, log_info, question_type, classification_result,
+                context_files, max_context_files, True, use_rerank
+            )
+    
+    async def _answer_with_prompt(
+        self,
+        repo_path: str,
+        question: str,
+        log_info: Optional[Dict],
+        question_type: str,
+        classification_result: Optional[Dict],
+        context_files: Optional[List[str]],
+        max_context_files: int,
+        use_vector_search: bool,
+        use_rerank: bool
+    ) -> Dict:
+        """使用传统 Prompt 方式回答问题（原有逻辑）"""
+        # 2. 选择相关文件（优先使用日志信息，然后使用混合搜索：向量 + 关键词 + Rerank）
         if context_files is None:
-            if use_vector_search and self.db:
+            if log_info and (log_info.get('file_paths') or log_info.get('function_names') or log_info.get('class_names')):
+                # 优先使用日志中提取的文件路径和函数名
+                context_files = self._select_files_from_log_info(
+                    repo_path, log_info, max_context_files
+                )
+                if context_files:
+                    logger.info(f"基于日志信息选择了 {len(context_files)} 个文件")
+            elif use_vector_search and self.db:
                 # 使用混合搜索（向量 + 关键词 BM25）+ Rerank（更精准）
                 context_files = self._select_relevant_files_with_vector_search(
                     repo_path, question, max_context_files, use_rerank
@@ -145,8 +387,8 @@ class CodeQAService:
         if question_type == "call_chain" and self.db:
             call_chain_info = await self._get_call_chain_info(repo_path, question)
         
-        # 5. 构建 Prompt（根据问题类型优化，包含调用链信息）
-        prompt = self._build_qa_prompt(question, context_data, question_type, call_chain_info)
+        # 5. 构建 Prompt（根据问题类型优化，包含调用链信息和日志信息）
+        prompt = self._build_qa_prompt(question, context_data, question_type, call_chain_info, log_info)
         
         # 6. 调用 LLM
         try:
@@ -178,7 +420,8 @@ class CodeQAService:
             result = {
                 'answer': answer,
                 'sources': context_files,
-                'question': question
+                'question': question,
+                'method': 'prompt'
             }
             
             # 添加问题分类信息
@@ -210,7 +453,8 @@ class CodeQAService:
             result = {
                 'answer': f"抱歉，回答问题时出错：{str(e)}",
                 'sources': [],
-                'question': question
+                'question': question,
+                'method': 'prompt'
             }
             
             return result
@@ -532,6 +776,207 @@ class CodeQAService:
         keywords = [w for w in words if w not in stopwords and len(w) > 2]
         
         return keywords[:5]  # 最多5个关键词
+    
+    def _is_log_related_question(self, question: str) -> bool:
+        """判断是否为日志相关的问题"""
+        log_keywords = [
+            '日志', 'log', 'error', 'exception', 'traceback',
+            '堆栈', 'stack', 'trace', '异常', '报错', '错误',
+            'File "', 'at ', 'line ', 'Traceback'
+        ]
+        question_lower = question.lower()
+        return any(keyword.lower() in question_lower for keyword in log_keywords)
+    
+    def _select_files_from_log_info(
+        self,
+        repo_path: str,
+        log_info: Dict,
+        max_files: int = 5
+    ) -> List[str]:
+        """从日志信息中选择相关文件"""
+        selected_files = []
+        
+        # 1. 优先使用日志中的文件路径
+        for file_path in log_info.get('file_paths', [])[:max_files]:
+            # 转换为相对路径
+            relative_path = self._normalize_file_path(repo_path, file_path)
+            if relative_path:
+                full_path = os.path.join(repo_path, relative_path)
+                if os.path.exists(full_path):
+                    selected_files.append(relative_path)
+                    logger.debug(f"从日志中找到文件: {relative_path}")
+        
+        # 2. 如果文件路径不够，通过函数名搜索
+        if len(selected_files) < max_files:
+            for func_name in log_info.get('function_names', []):
+                files = self._search_files_by_function_name(repo_path, func_name)
+                for file_path in files:
+                    if file_path not in selected_files:
+                        selected_files.append(file_path)
+                        logger.debug(f"通过函数名 {func_name} 找到文件: {file_path}")
+                        if len(selected_files) >= max_files:
+                            break
+                if len(selected_files) >= max_files:
+                    break
+        
+        # 3. 如果还不够，通过类名搜索
+        if len(selected_files) < max_files:
+            for class_name in log_info.get('class_names', []):
+                files = self._search_files_by_class_name(repo_path, class_name)
+                for file_path in files:
+                    if file_path not in selected_files:
+                        selected_files.append(file_path)
+                        logger.debug(f"通过类名 {class_name} 找到文件: {file_path}")
+                        if len(selected_files) >= max_files:
+                            break
+                if len(selected_files) >= max_files:
+                    break
+        
+        return selected_files[:max_files]
+    
+    def _normalize_file_path(self, repo_path: str, file_path: str) -> Optional[str]:
+        """规范化文件路径，转换为相对于仓库的路径"""
+        if not file_path:
+            return None
+        
+        # 移除绝对路径前缀
+        if os.path.isabs(file_path):
+            # 尝试找到仓库路径在文件路径中的位置
+            if repo_path in file_path:
+                try:
+                    relative = os.path.relpath(file_path, repo_path)
+                    return relative
+                except ValueError:
+                    # 如果路径不在同一驱动器上（Windows），尝试其他方法
+                    pass
+            
+            # 尝试从文件路径中提取相对路径部分
+            # 查找常见的代码目录结构
+            patterns = [
+                r'[/\\](app|src|lib|libs|packages|services|utils|models|views|controllers)[/\\].+',
+                r'[/\\]([\w/\\]+\.(py|java|js|ts|go|rs))$'
+            ]
+            import re
+            for pattern in patterns:
+                match = re.search(pattern, file_path.replace('\\', '/'))
+                if match:
+                    relative = match.group(0).lstrip('/\\')
+                    return relative.replace('/', os.sep)
+        else:
+            # 已经是相对路径，直接返回
+            return file_path
+        
+        return None
+    
+    def _search_files_by_function_name(
+        self,
+        repo_path: str,
+        function_name: str
+    ) -> List[str]:
+        """通过函数名搜索文件"""
+        if not self.db or not function_name:
+            return []
+        
+        try:
+            repository_id = self._get_repository_id_from_path(repo_path)
+            if not repository_id:
+                return []
+            
+            # 在代码符号索引中搜索
+            from app.services.opensearch_service import OpenSearchService
+            from opensearch_schemas.code_indices import CODE_SYMBOLS_INDEX
+            
+            opensearch = OpenSearchService()
+            results = opensearch.client.search(
+                index=CODE_SYMBOLS_INDEX,
+                body={
+                    "size": 10,
+                    "query": {
+                        "bool": {
+                            "must": [
+                                {"term": {"repository_id": repository_id}},
+                                {
+                                    "bool": {
+                                        "should": [
+                                            {"term": {"symbol_name": function_name}},
+                                            {"wildcard": {"symbol_name": f"*{function_name}*"}},
+                                            {"match": {"qualified_name": function_name}}
+                                        ]
+                                    }
+                                },
+                                {"term": {"symbol_type": "function"}}
+                            ]
+                        }
+                    },
+                    "_source": ["file_path"]
+                }
+            )
+            
+            file_paths = []
+            for hit in results['hits']['hits']:
+                file_path = hit['_source'].get('file_path')
+                if file_path and file_path not in file_paths:
+                    file_paths.append(file_path)
+            
+            return file_paths
+        except Exception as e:
+            logger.warning(f"通过函数名搜索文件失败: {e}")
+            return []
+    
+    def _search_files_by_class_name(
+        self,
+        repo_path: str,
+        class_name: str
+    ) -> List[str]:
+        """通过类名搜索文件"""
+        if not self.db or not class_name:
+            return []
+        
+        try:
+            repository_id = self._get_repository_id_from_path(repo_path)
+            if not repository_id:
+                return []
+            
+            # 在代码符号索引中搜索
+            from app.services.opensearch_service import OpenSearchService
+            from opensearch_schemas.code_indices import CODE_SYMBOLS_INDEX
+            
+            opensearch = OpenSearchService()
+            results = opensearch.client.search(
+                index=CODE_SYMBOLS_INDEX,
+                body={
+                    "size": 10,
+                    "query": {
+                        "bool": {
+                            "must": [
+                                {"term": {"repository_id": repository_id}},
+                                {
+                                    "bool": {
+                                        "should": [
+                                            {"term": {"symbol_name": class_name}},
+                                            {"wildcard": {"symbol_name": f"*{class_name}*"}},
+                                            {"match": {"qualified_name": class_name}}
+                                        ]
+                                    }
+                                },
+                                {"term": {"symbol_type": "class"}}
+                            ]
+                        }
+                    },
+                    "_source": ["file_path"]
+                }
+            )
+            
+            file_paths = []
+            for hit in results['hits']['hits']:
+                file_path = hit['_source'].get('file_path')
+                if file_path and file_path not in file_paths:
+                    file_paths.append(file_path)
+            
+            return file_paths
+        except Exception as e:
+            logger.warning(f"通过类名搜索文件失败: {e}")
+            return []
     
     async def _get_call_chain_info(
         self,
@@ -870,12 +1315,288 @@ class CodeQAService:
         
         return code_snippets
     
+    def _build_function_calling_prompt(
+        self,
+        question: str,
+        log_info: Optional[Dict],
+        question_type: str
+    ) -> str:
+        """构建 Function Calling 的初始 Prompt"""
+        prompt = f"## 用户问题\n\n{question}\n\n"
+        
+        # 如果有日志信息，添加到 Prompt
+        if log_info:
+            prompt += "## 日志信息解析结果\n\n"
+            if log_info.get('file_paths'):
+                prompt += f"日志中提到的文件路径：{', '.join(log_info['file_paths'])}\n"
+            if log_info.get('line_numbers'):
+                prompt += f"日志中提到的行号：{', '.join(map(str, log_info['line_numbers']))}\n"
+            if log_info.get('function_names'):
+                prompt += f"日志中提到的函数名：{', '.join(log_info['function_names'])}\n"
+            if log_info.get('class_names'):
+                prompt += f"日志中提到的类名：{', '.join(log_info['class_names'])}\n"
+            if log_info.get('error_types'):
+                prompt += f"日志中的异常类型：{', '.join(log_info['error_types'])}\n"
+            if log_info.get('log_level'):
+                prompt += f"日志级别：{log_info['log_level']}\n"
+            prompt += "\n"
+        
+        prompt += """## 任务说明
+
+请根据以上信息，使用提供的工具来定位和分析相关代码。
+
+可用工具：
+1. **search_file_by_path** - 搜索文件**
+   - 如果日志中提到了文件路径，使用此工具查找文件
+   - 参数：file_path（文件路径）
+
+2. **search_function_by_name - 搜索函数**
+   - 如果日志中提到了函数名，使用此工具查找函数定义
+   - 参数：function_name（函数名），max_results（可选，默认5）
+
+3. **search_class_by_name - 搜索类**
+   - 如果日志中提到了类名，使用此工具查找类定义
+   - 参数：class_name（类名），max_results（可选，默认5）
+
+4. **read_file_content - 读取文件内容**
+   - 找到相关文件后，使用此工具读取文件内容
+   - 如果日志中提到了行号，使用 start_line 和 end_line 参数读取特定范围
+   - 参数：file_path（文件路径），start_line（可选），end_line（可选），context_lines（可选，默认10）
+
+5. **search_related_code - 语义搜索代码**
+   - 如果无法通过文件路径或函数名直接定位，使用此工具进行语义搜索
+   - 参数：query（搜索查询），max_results（可选，默认5）
+
+## 工作流程
+
+1. 如果日志中提到了文件路径，先使用 search_file_by_path 查找文件
+2. 如果日志中提到了函数名，使用 search_function_by_name 查找函数
+3. 如果日志中提到了类名，使用 search_class_by_name 查找类
+4. 找到文件后，使用 read_file_content 读取文件内容（如果日志中提到了行号，读取该行附近的内容）
+5. 如果无法直接定位，使用 search_related_code 进行语义搜索
+6. 基于收集到的代码信息，分析问题并给出答案
+
+请开始使用工具定位代码。"""
+        
+        return prompt
+    
+    async def _execute_qa_tool(
+        self,
+        function_name: str,
+        arguments: Dict,
+        repo_path: str
+    ) -> Dict:
+        """执行代码问答工具"""
+        try:
+            if function_name == "search_file_by_path":
+                return await self._tool_search_file_by_path(arguments, repo_path)
+            elif function_name == "search_function_by_name":
+                return await self._tool_search_function_by_name(arguments, repo_path)
+            elif function_name == "search_class_by_name":
+                return await self._tool_search_class_by_name(arguments, repo_path)
+            elif function_name == "read_file_content":
+                return await self._tool_read_file_content(arguments, repo_path)
+            elif function_name == "search_related_code":
+                return await self._tool_search_related_code(arguments, repo_path)
+            else:
+                return {"error": f"未知的工具: {function_name}"}
+        except Exception as e:
+            logger.error(f"执行工具 {function_name} 失败: {e}", exc_info=True)
+            return {"error": str(e)}
+    
+    async def _tool_search_file_by_path(self, arguments: Dict, repo_path: str) -> Dict:
+        """工具：根据文件路径搜索文件"""
+        file_path = arguments.get('file_path')
+        if not file_path:
+            return {"error": "缺少 file_path 参数"}
+        
+        # 规范化文件路径
+        relative_path = self._normalize_file_path(repo_path, file_path)
+        if not relative_path:
+            return {"error": f"无法规范化文件路径: {file_path}"}
+        
+        full_path = os.path.join(repo_path, relative_path)
+        if os.path.exists(full_path):
+            return {
+                "file_path": relative_path,
+                "exists": True,
+                "message": f"找到文件: {relative_path}"
+            }
+        else:
+            return {
+                "file_path": relative_path,
+                "exists": False,
+                "message": f"文件不存在: {relative_path}"
+            }
+    
+    async def _tool_search_function_by_name(self, arguments: Dict, repo_path: str) -> Dict:
+        """工具：根据函数名搜索函数"""
+        function_name = arguments.get('function_name')
+        max_results = arguments.get('max_results', 5)
+        
+        if not function_name:
+            return {"error": "缺少 function_name 参数"}
+        
+        file_paths = self._search_files_by_function_name(repo_path, function_name)
+        
+        return {
+            "function_name": function_name,
+            "file_paths": file_paths[:max_results],
+            "count": len(file_paths),
+            "message": f"找到 {len(file_paths)} 个包含函数 '{function_name}' 的文件"
+        }
+    
+    async def _tool_search_class_by_name(self, arguments: Dict, repo_path: str) -> Dict:
+        """工具：根据类名搜索类"""
+        class_name = arguments.get('class_name')
+        max_results = arguments.get('max_results', 5)
+        
+        if not class_name:
+            return {"error": "缺少 class_name 参数"}
+        
+        file_paths = self._search_files_by_class_name(repo_path, class_name)
+        
+        return {
+            "class_name": class_name,
+            "file_paths": file_paths[:max_results],
+            "count": len(file_paths),
+            "message": f"找到 {len(file_paths)} 个包含类 '{class_name}' 的文件"
+        }
+    
+    async def _tool_read_file_content(
+        self,
+        arguments: Dict,
+        repo_path: str
+    ) -> Dict:
+        """工具：读取文件内容"""
+        file_path = arguments.get('file_path')
+        start_line = arguments.get('start_line')
+        end_line = arguments.get('end_line')
+        context_lines = arguments.get('context_lines', 10)
+        
+        if not file_path:
+            return {"error": "缺少 file_path 参数"}
+        
+        full_path = os.path.join(repo_path, file_path)
+        if not os.path.exists(full_path):
+            return {"error": f"文件不存在: {file_path}"}
+        
+        try:
+            with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = f.readlines()
+            
+            # 如果指定了行号范围
+            if start_line:
+                start_idx = max(0, start_line - 1 - context_lines)
+                end_idx = min(len(lines), end_line if end_line else start_line + context_lines)
+                selected_lines = lines[start_idx:end_idx]
+                content = ''.join(selected_lines)
+                actual_start = start_idx + 1
+                actual_end = end_idx
+            else:
+                # 读取整个文件（限制长度）
+                content = ''.join(lines[:1000])  # 最多1000行
+                actual_start = 1
+                actual_end = min(len(lines), 1000)
+            
+            # 检测语言
+            language = self.parser_service.detect_language(full_path)
+            
+            return {
+                "file_path": file_path,
+                "content": content,
+                "language": language,
+                "start_line": actual_start,
+                "end_line": actual_end,
+                "total_lines": len(lines),
+                "message": f"成功读取文件 {file_path} 的第 {actual_start}-{actual_end} 行"
+            }
+        except Exception as e:
+            return {"error": f"读取文件失败: {str(e)}"}
+    
+    async def _tool_search_related_code(self, arguments: Dict, repo_path: str) -> Dict:
+        """工具：语义搜索相关代码"""
+        query = arguments.get('query')
+        max_results = arguments.get('max_results', 5)
+        
+        if not query:
+            return {"error": "缺少 query 参数"}
+        
+        if not self.db:
+            return {"error": "数据库连接不可用，无法进行语义搜索"}
+        
+        try:
+            # 使用混合搜索
+            context_files = self._select_relevant_files_with_vector_search(
+                repo_path, query, max_results, use_rerank=True
+            )
+            
+            # 读取文件内容摘要
+            results = []
+            for file_path in context_files:
+                full_path = os.path.join(repo_path, file_path)
+                if os.path.exists(full_path):
+                    try:
+                        with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            content = f.read()
+                        results.append({
+                            "file_path": file_path,
+                            "content_summary": content[:500],  # 只返回摘要
+                            "language": self.parser_service.detect_language(full_path)
+                        })
+                    except:
+                        pass
+            
+            return {
+                "query": query,
+                "results": results,
+                "count": len(results),
+                "message": f"找到 {len(results)} 个相关文件"
+            }
+        except Exception as e:
+            return {"error": f"语义搜索失败: {str(e)}"}
+    
+    def _build_final_answer_from_conversation(
+        self,
+        messages: List[Dict],
+        collected_context: List[Dict],
+        question: str,
+        log_info: Optional[Dict]
+    ) -> str:
+        """从对话历史构建最终答案"""
+        # 提取 LLM 的最后一条回复
+        for msg in reversed(messages):
+            if msg.get('role') == 'assistant' and msg.get('content'):
+                return msg['content']
+        
+        # 如果没有找到，构建一个基本答案
+        answer = f"基于收集到的代码信息，分析问题：{question}\n\n"
+        
+        if log_info:
+            answer += "日志信息分析：\n"
+            if log_info.get('file_paths'):
+                answer += f"- 相关文件：{', '.join(log_info['file_paths'])}\n"
+            if log_info.get('function_names'):
+                answer += f"- 相关函数：{', '.join(log_info['function_names'])}\n"
+            if log_info.get('error_types'):
+                answer += f"- 异常类型：{', '.join(log_info['error_types'])}\n"
+            answer += "\n"
+        
+        if collected_context:
+            answer += "收集到的代码上下文：\n"
+            for ctx in collected_context[:5]:  # 最多5个
+                if 'file_path' in ctx:
+                    answer += f"- {ctx['file_path']}\n"
+        
+        return answer
+    
     def _build_qa_prompt(
         self, 
         question: str, 
         context_data: List[Dict], 
         question_type: str = 'general',
-        call_chain_info: Optional[Dict[str, Any]] = None
+        call_chain_info: Optional[Dict[str, Any]] = None,
+        log_info: Optional[Dict[str, Any]] = None
     ) -> str:
         """
         构建问答 Prompt
@@ -911,6 +1632,30 @@ class CodeQAService:
         
         # 添加问题
         prompt += f"## 用户问题\n\n{question}\n\n"
+        
+        # 如果有日志信息，添加日志解析结果
+        if log_info:
+            prompt += "## 日志信息解析结果\n\n"
+            if log_info.get('file_paths'):
+                prompt += f"日志中提到的文件：{', '.join(log_info['file_paths'])}\n"
+            if log_info.get('line_numbers'):
+                prompt += f"日志中提到的行号：{', '.join(map(str, log_info['line_numbers']))}\n"
+            if log_info.get('function_names'):
+                prompt += f"日志中提到的函数：{', '.join(log_info['function_names'])}\n"
+            if log_info.get('class_names'):
+                prompt += f"日志中提到的类：{', '.join(log_info['class_names'])}\n"
+            if log_info.get('error_types'):
+                prompt += f"日志中的异常类型：{', '.join(log_info['error_types'])}\n"
+            if log_info.get('log_level'):
+                prompt += f"日志级别：{log_info['log_level']}\n"
+            
+            prompt += """
+请根据以上日志信息，准确定位到相关的代码文件和位置。
+如果日志中提到了具体的文件路径和行号，请重点查看这些位置。
+如果日志中提到了函数名或类名，请在代码中找到这些符号的定义。
+如果日志中提到了异常类型，请分析可能导致该异常的原因。
+
+"""
         
         # 根据问题类型添加特定要求
         if question_type == "call_chain":

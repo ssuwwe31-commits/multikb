@@ -39,12 +39,13 @@ class CodeAnalysisAgentV2:
         'coverage', '.pytest_cache', '.mypy_cache'
     ]
     
-    def __init__(self, db: Optional[Any] = None):
+    def __init__(self, db: Optional[Any] = None, enable_file_level_tools: bool = True):
         """
         初始化 Agent V2
         
         Args:
             db: 数据库会话（可选，用于向量检索）
+            enable_file_level_tools: 是否启用文件级工具（用于处理大文件）
         """
         # 使用现有的服务
         self.analyzer_service = CodeAnalyzerService()
@@ -68,6 +69,13 @@ class CodeAnalysisAgentV2:
         self.ollama_url = settings.OLLAMA_BASE_URL or "http://localhost:11434"
         self.llm_model = settings.CODE_LLM_MODEL or "qwen2.5-coder:7b"
         
+        # 文件级工具（用于处理大文件）
+        self.enable_file_level_tools = enable_file_level_tools
+        self.file_tools = None
+        if enable_file_level_tools:
+            # 延迟初始化，需要 repo_path
+            pass
+        
         # 注册工具
         self.tools = self._register_tools()
         
@@ -77,16 +85,38 @@ class CodeAnalysisAgentV2:
         self.max_iterations: int = 5
         self.current_repo_path: Optional[str] = None  # 当前分析的仓库路径
         
-        logger.info(f"代码分析 Agent V2 初始化完成，使用模型: {self.llm_model}")
+        logger.info(f"代码分析 Agent V2 初始化完成，使用模型: {self.llm_model}, 文件级工具: {enable_file_level_tools}")
     
     def _register_tools(self) -> Dict[str, Callable]:
         """注册工具函数"""
-        return {
+        tools = {
+            # 代码库级工具（现有）
             "analyze_code_structure": self._tool_analyze_code_structure,
             "analyze_code_context": self._tool_analyze_code_context,
             "search_similar_code": self._tool_search_similar_code,
             "evaluate_analysis_quality": self._tool_evaluate_analysis_quality,
         }
+        
+        # 文件级工具（新增，用于处理大文件）
+        if self.enable_file_level_tools:
+            tools.update({
+                "smart_sample_file": self._tool_smart_sample_file,
+                "analyze_file_structure": self._tool_analyze_file_structure,
+                "supplement_file_sample": self._tool_supplement_file_sample,
+                "validate_extraction": self._tool_validate_extraction,
+            })
+        
+        return tools
+    
+    def _init_file_tools(self):
+        """初始化文件级工具（延迟初始化，需要 repo_path）"""
+        if self.file_tools is None and self.current_repo_path:
+            from app.services.code_file_react_tools import FileLevelReActTools
+            from app.services.llm_enhancement_service import LLMEnhancementService
+            self.file_tools = FileLevelReActTools(
+                repo_path=self.current_repo_path,
+                llm_service=LLMEnhancementService()
+            )
     
     def analyze_repository(self, repo_path: str) -> Dict:
         """
@@ -104,6 +134,10 @@ class CodeAnalysisAgentV2:
         self.conversation_history = []
         self.iteration_count = 0
         self.current_repo_path = repo_path  # 保存当前仓库路径
+        
+        # 初始化文件级工具（如果需要）
+        if self.enable_file_level_tools:
+            self._init_file_tools()
         
         # 1. 初始观察
         observation = self._observe(repo_path)
@@ -231,6 +265,8 @@ class CodeAnalysisAgentV2:
         tools_description = """
 你可以使用以下工具来分析代码库：
 
+**代码库级工具：**
+
 1. analyze_code_structure(repo_path, file_patterns=None, max_files=None)
    - 分析代码库结构，提取文件、函数、类等基本信息
    - 返回：统计信息、文件列表、依赖关系、API 端点统计
@@ -247,6 +283,29 @@ class CodeAnalysisAgentV2:
    - 评估分析结果质量，判断是否需要迭代
    - 返回：质量评估、是否需要迭代、改进建议
 
+""" + ("""
+**文件级工具（用于处理大文件）：**
+
+5. smart_sample_file(file_path, strategy="api_endpoints", max_length=8500)
+   - 智能采样单个大文件，提取关键代码
+   - strategy: "api_endpoints" | "storage_systems" | "general"
+   - 返回：采样后的代码、压缩率、策略信息
+
+6. analyze_file_structure(file_path)
+   - 分析文件结构，识别路由、导入、配置等关键区域
+   - 返回：文件结构信息、关键区域位置
+
+7. supplement_file_sample(file_path, current_sample, target_areas, max_additional_length=2000)
+   - 在现有采样的基础上，补充特定区域的代码
+   - target_areas: ["beginning", "middle", "end", "routing", "imports"]
+   - 返回：补充后的采样内容
+
+8. validate_extraction(extracted_results, file_info, task_type, file_content=None)
+   - 验证提取结果的完整性和准确性
+   - task_type: "api_endpoints" | "storage_systems"
+   - 返回：置信度、完整度、遗漏模式、改进建议
+
+""" if self.enable_file_level_tools else "") + """
 工具调用格式（JSON）：
 {
   "tool": "tool_name",
@@ -261,6 +320,12 @@ class CodeAnalysisAgentV2:
   {"tool": "tool1", "arguments": {...}},
   {"tool": "tool2", "arguments": {...}}
 ]
+
+**使用建议：**
+- 首先使用 analyze_code_structure 了解代码库整体情况
+- 如果发现大文件（> 10K 字符），使用文件级工具进行详细分析
+- 使用 validate_extraction 验证提取结果的完整性
+- 根据验证结果，决定是否需要补充采样或进一步分析
 
 请根据代码库的特点，智能地选择和使用这些工具，逐步深入分析。
 """
@@ -326,7 +391,9 @@ class CodeAnalysisAgentV2:
                 payload["options"]["thinking"] = True
                 payload["options"]["max_thinking_steps"] = 5
             
-            logger.debug(f"Agent V2 调用 LLM: {self.llm_model}, 消息数: {len(messages)}")
+            # 计算 prompt 总长度（所有消息的内容）
+            total_prompt_length = sum(len(str(msg.get('content', ''))) for msg in messages)
+            logger.info(f"[LLM调用] Agent V2 使用模型 {self.llm_model}, 消息数: {len(messages)}, prompt 总长度: {total_prompt_length} 字符")
             
             response = requests.post(url, json=payload, timeout=600)  # 增加超时到10分钟
             response.raise_for_status()
@@ -337,7 +404,7 @@ class CodeAnalysisAgentV2:
             # 提取 thinking 过程（如果有）
             if 'thinking' in result.get('message', {}):
                 thinking = result['message']['thinking']
-                logger.info(f"Agent V2 Thinking 过程（前200字符）: {thinking[:200]}...")
+                logger.info(f"[LLM调用] Agent V2 Thinking 过程（前200字符）: {thinking[:200]}...")
                 # 保存思考过程到元数据
                 if not hasattr(self, 'thinking_history'):
                     self.thinking_history = []
@@ -346,7 +413,7 @@ class CodeAnalysisAgentV2:
                     'thinking': thinking
                 })
             
-            logger.debug(f"Agent V2 LLM 响应长度: {len(content)} 字符")
+            logger.info(f"[LLM调用] Agent V2 成功，响应长度: {len(content)} 字符")
             return content
             
         except requests.exceptions.Timeout:
@@ -956,3 +1023,80 @@ class CodeAnalysisAgentV2:
                     structure['main_directories'].append(item)
         
         return structure
+    
+    # ============================================
+    # 文件级工具实现（新增）
+    # ============================================
+    
+    def _tool_smart_sample_file(
+        self, 
+        file_path: str, 
+        strategy: str = "api_endpoints",
+        max_length: int = 8500
+    ) -> Dict:
+        """工具：智能采样单个文件"""
+        if not self.file_tools:
+            self._init_file_tools()
+        
+        if not self.file_tools:
+            return {
+                "success": False,
+                "error": "文件级工具未初始化，需要 repo_path"
+            }
+        
+        return self.file_tools.smart_sample_file(file_path, strategy, max_length)
+    
+    def _tool_analyze_file_structure(self, file_path: str) -> Dict:
+        """工具：分析文件结构"""
+        if not self.file_tools:
+            self._init_file_tools()
+        
+        if not self.file_tools:
+            return {
+                "success": False,
+                "error": "文件级工具未初始化，需要 repo_path"
+            }
+        
+        return self.file_tools.analyze_file_structure(file_path)
+    
+    def _tool_supplement_file_sample(
+        self,
+        file_path: str,
+        current_sample: str,
+        target_areas: List[str],
+        max_additional_length: int = 2000
+    ) -> Dict:
+        """工具：补充文件采样"""
+        if not self.file_tools:
+            self._init_file_tools()
+        
+        if not self.file_tools:
+            return {
+                "success": False,
+                "error": "文件级工具未初始化，需要 repo_path"
+            }
+        
+        return self.file_tools.supplement_file_sample(
+            file_path, current_sample, target_areas, max_additional_length
+        )
+    
+    def _tool_validate_extraction(
+        self,
+        extracted_results: List[Dict],
+        file_info: Dict,
+        task_type: str,
+        file_content: Optional[str] = None
+    ) -> Dict:
+        """工具：验证提取结果"""
+        if not self.file_tools:
+            self._init_file_tools()
+        
+        if not self.file_tools:
+            return {
+                "success": False,
+                "error": "文件级工具未初始化，需要 repo_path"
+            }
+        
+        return self.file_tools.validate_extraction(
+            extracted_results, file_info, task_type, file_content
+        )

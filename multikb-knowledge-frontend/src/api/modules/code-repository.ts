@@ -354,11 +354,14 @@ export function codeQA(data: {
   repository_id: number
   question: string
   context_files?: string[]
+  session_id?: string  // 可选，会话ID
 }) {
+  const { repository_id, session_id, ...requestData } = data
   return request<QAResult>({
-    url: '/code-analysis/qa',
+    url: `/code-analysis/repositories/${repository_id}/qa`,
     method: 'post',
-    data
+    data: requestData,
+    params: session_id ? { session_id } : undefined
   })
 }
 
@@ -540,5 +543,181 @@ export function getKBRepositories(kbId: number) {
   return request({
     url: `/code-analysis/knowledge-bases/${kbId}/repositories`,
     method: 'get'
+  })
+}
+
+// =============================================
+// 代码导航 API（类似 LSP）
+// =============================================
+
+/**
+ * 代码导航位置信息
+ */
+export interface NavigationLocation {
+  file_path: string
+  line: number
+  column: number
+  symbol_name?: string
+  qualified_name?: string
+  symbol_type?: string
+  signature?: string
+  context?: string
+  type?: 'definition' | 'reference' | 'call'
+}
+
+/**
+ * 悬停信息
+ */
+export interface HoverInfo {
+  symbol_name: string
+  qualified_name: string
+  symbol_type: string
+  signature: string
+  docstring?: string
+  file_path?: string
+  line?: number
+}
+
+/**
+ * Go to Definition - 跳转到定义
+ */
+export function getDefinition(params: {
+  repository_id: number
+  file_path: string
+  line: number
+  column?: number
+}) {
+  return request<NavigationLocation>({
+    url: '/code-analysis/navigation/definition',
+    method: 'get',
+    params
+  })
+}
+
+/**
+ * Find References - 查找所有引用
+ */
+export function getReferences(params: {
+  repository_id: number
+  file_path: string
+  line: number
+  column?: number
+  include_definition?: boolean
+}) {
+  return request<{
+    total: number
+    references: NavigationLocation[]
+  }>({
+    url: '/code-analysis/navigation/references',
+    method: 'get',
+    params
+  })
+}
+
+/**
+ * Hover Info - 获取悬停信息
+ */
+export function getHoverInfo(params: {
+  repository_id: number
+  file_path: string
+  line: number
+  column?: number
+}) {
+  return request<HoverInfo>({
+    url: '/code-analysis/navigation/hover',
+    method: 'get',
+    params
+  })
+}
+
+// =============================================
+// 代码问答会话 API
+// =============================================
+
+/**
+ * 创建代码问答会话
+ */
+export function createQASession(repositoryId: number, data?: {
+  session_name?: string
+}) {
+  return request<{
+    session_id: string
+  }>({
+    url: `/code-analysis/repositories/${repositoryId}/qa/sessions`,
+    method: 'post',
+    data
+  })
+}
+
+/**
+ * 获取代码问答会话列表
+ */
+export function getQASessions(repositoryId: number, params?: {
+  page?: number
+  page_size?: number
+}) {
+  return request<{
+    total: number
+    sessions: Array<{
+      session_id: string
+      session_name: string
+      question_count: number
+      last_question: string
+      last_activity_time: string
+      created_at: string
+    }>
+  }>({
+    url: `/code-analysis/repositories/${repositoryId}/qa/sessions`,
+    method: 'get',
+    params
+  })
+}
+
+/**
+ * 获取问答记录列表
+ */
+export function getQARecords(sessionId: string, params?: {
+  page?: number
+  page_size?: number
+}) {
+  return request<{
+    total: number
+    records: Array<{
+      record_id: string
+      question: string
+      answer: string
+      sources: string[]
+      created_at: string
+    }>
+  }>({
+    url: `/code-analysis/qa/sessions/${sessionId}/records`,
+    method: 'get',
+    params
+  })
+}
+
+// =============================================
+// 代码解释
+// =============================================
+
+export interface CodeExplanationRequest {
+  code: string
+  file_path?: string
+  language?: string
+}
+
+export interface CodeExplanationResponse {
+  explanation: string
+  code: string
+  file_path?: string
+  language?: string
+  model: string
+}
+
+export function explainCode(repositoryId: number, data: CodeExplanationRequest) {
+  return request<CodeExplanationResponse>({
+    url: `/code-analysis/repositories/${repositoryId}/explain-code`,
+    method: 'post',
+    data
   })
 }

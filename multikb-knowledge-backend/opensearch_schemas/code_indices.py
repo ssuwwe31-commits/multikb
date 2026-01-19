@@ -353,12 +353,173 @@ WIKI_CONTENT_INDEX_CONFIG = {
 }
 
 # ============================================
+# 代码问答记录索引配置
+# ============================================
+
+CODE_QA_RECORDS_INDEX_CONFIG: Dict[str, Any] = {
+    "settings": {
+        "number_of_shards": 1,
+        "number_of_replicas": 1,
+        "index": {
+            "knn": True,
+            "knn.algo_param.ef_search": 100
+        },
+        "analysis": {
+            "analyzer": {
+                "ik_max_word": {
+                    "type": "ik_max_word"
+                },
+                "ik_smart": {
+                    "type": "ik_smart"
+                }
+            }
+        }
+    },
+    "mappings": {
+        "properties": {
+            "record_id": {
+                "type": "keyword"
+            },
+            "session_id": {
+                "type": "keyword"
+            },
+            "repository_id": {
+                "type": "integer"
+            },
+            "question": {
+                "type": "text",
+                "analyzer": "ik_max_word",
+                "search_analyzer": "ik_smart",
+                "fields": {
+                    "keyword": {
+                        "type": "keyword"
+                    }
+                }
+            },
+            "answer": {
+                "type": "text",
+                "analyzer": "ik_max_word",
+                "search_analyzer": "ik_smart"
+            },
+            "question_vector": {
+                "type": "knn_vector",
+                "dimension": settings.TEXT_EMBEDDING_DIMENSION,  # 2560
+                "method": {
+                    "name": "hnsw",
+                    "space_type": "l2",
+                    "engine": "nmslib",
+                    "parameters": {
+                        "ef_construction": 128,
+                        "m": 24
+                    }
+                }
+            },
+            "answer_vector": {
+                "type": "knn_vector",
+                "dimension": settings.TEXT_EMBEDDING_DIMENSION,  # 2560
+                "method": {
+                    "name": "hnsw",
+                    "space_type": "l2",
+                    "engine": "nmslib",
+                    "parameters": {
+                        "ef_construction": 128,
+                        "m": 24
+                    }
+                }
+            },
+            "context_files": {
+                "type": "nested",
+                "properties": {
+                    "file_path": {
+                        "type": "keyword"
+                    },
+                    "file_name": {
+                        "type": "keyword"
+                    },
+                    "language": {
+                        "type": "keyword"
+                    },
+                    "content_summary": {
+                        "type": "text"
+                    }
+                }
+            },
+            "code_snippets": {
+                "type": "nested",
+                "properties": {
+                    "file_path": {
+                        "type": "keyword"
+                    },
+                    "start_line": {
+                        "type": "integer"
+                    },
+                    "end_line": {
+                        "type": "integer"
+                    },
+                    "language": {
+                        "type": "keyword"
+                    },
+                    "code": {
+                        "type": "text"
+                    }
+                }
+            },
+            "mermaid_diagrams": {
+                "type": "text",
+                "index": False
+            },
+            "question_type": {
+                "type": "keyword"
+            },
+            "classification": {
+                "type": "object",
+                "properties": {
+                    "category": {
+                        "type": "keyword"
+                    },
+                    "method": {
+                        "type": "keyword"
+                    },
+                    "confidence": {
+                        "type": "float"
+                    }
+                }
+            },
+            "call_chain_info": {
+                "type": "object",
+                "enabled": False
+            },
+            "processing_info": {
+                "type": "object",
+                "properties": {
+                    "processing_time": {
+                        "type": "float"
+                    },
+                    "token_usage": {
+                        "type": "integer"
+                    },
+                    "model_used": {
+                        "type": "keyword"
+                    }
+                }
+            },
+            "created_at": {
+                "type": "date",
+                "format": "yyyy-MM-dd HH:mm:ss||yyyy-MM-dd||epoch_millis"
+            }
+        }
+    }
+}
+
+
+# ============================================
 # 索引名称常量
 # ============================================
 
 CODE_FILES_INDEX = "code_files"
 CODE_SYMBOLS_INDEX = "code_symbols"
 WIKI_CONTENT_INDEX = "wiki_content"
+CODE_QA_RECORDS_INDEX = "code_qa_records"
 
 
 # ============================================
@@ -376,6 +537,16 @@ async def init_code_indices(opensearch_client):
     from app.config.settings import settings
     
     try:
+        # 创建代码问答记录索引
+        if not opensearch_client.indices.exists(index=CODE_QA_RECORDS_INDEX):
+            opensearch_client.indices.create(
+                index=CODE_QA_RECORDS_INDEX,
+                body=CODE_QA_RECORDS_INDEX_CONFIG
+            )
+            logger.info(f"创建代码问答记录索引成功: {CODE_QA_RECORDS_INDEX}，向量维度={settings.TEXT_EMBEDDING_DIMENSION}")
+        else:
+            logger.info(f"代码问答记录索引已存在: {CODE_QA_RECORDS_INDEX}")
+        
         # 创建代码文件索引
         if not opensearch_client.indices.exists(index=CODE_FILES_INDEX):
             opensearch_client.indices.create(

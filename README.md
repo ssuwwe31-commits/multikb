@@ -130,15 +130,27 @@ npm run dev
 
 ## 📖 文档导航
 
-### 快速开始
-- [代码库集成快速开始](CODE-INTEGRATION-QUICKSTART.md) - 详细使用指南
-- [启动检查清单](STARTUP-CHECKLIST.md) - 启动前检查
-- [项目总结](README-CODE-INTEGRATION.md) - 代码库集成总结
+详细文档请查看 [docs](./docs) 目录：
 
-### 技术设计
+### 快速开始
+- [代码库集成快速开始](docs/guides/CODE-INTEGRATION-QUICKSTART.md) - 详细使用指南
+- [项目总结](docs/guides/README-CODE-INTEGRATION.md) - 代码库集成总结
+
+### 架构设计
+- [数据存储架构](docs/architecture/DATA_STORAGE_ARCHITECTURE.md) - 数据存储架构说明
 - [代码库集成设计](docs/architecture/code-repository-integration-design.md) - 完整技术设计
-- [MVP 设计](docs/architecture/code-repository-mvp-design.md) - MVP 版本设计
-- [完整设计](docs/architecture/code-repository-full-design.md) - 完整版本设计
+- [代码问答逻辑分析](docs/architecture/CODE_QA_LOGIC_ANALYSIS.md) - 代码问答系统完整逻辑
+- [React Agent 设计](docs/architecture/CODE_ANALYSIS_REACT_AGENT_DESIGN.md) - React Agent 架构设计
+
+### 开发文档
+- [代码库处理流程](docs/development/CODE_REPOSITORY_PROCESS_FLOW.md) - 从克隆到 Wiki 的完整流程
+- [LLM 使用与优化总结](docs/development/LLM_AND_OPTIMIZATION_SUMMARY.md) - LLM 使用情况与优化建议
+- [代码分析与 Function Calling](docs/development/CODE_ANALYSIS_AND_FUNCTION_CALLING.md) - Function Calling 实现与优化
+- [性能优化计划](docs/development/PERFORMANCE_OPTIMIZATION_PLAN.md) - 性能优化实施计划
+- [代码检查总结](docs/development/CODE_REVIEW_SUMMARY.md) - 代码检查报告
+
+### 参考文档
+- [返回类型字段说明](docs/reference/RETURN_TYPE_FIELD_EXPLANATION.md) - return_type 字段详细说明
 
 ### 部署和运维
 - [数据库迁移指南](multikb-knowledge-backend/MIGRATION-GUIDE.md) - 数据库迁移

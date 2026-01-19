@@ -16,13 +16,32 @@ from app.core.logging import logger
 # 抑制 tree-sitter 的 FutureWarning
 warnings.filterwarnings("ignore", category=FutureWarning, module="tree_sitter")
 
-# 尝试导入语言库
+# 尝试导入语言库（优先使用 tree-sitter-language-pack，降级到 tree-sitter-languages）
+LANGUAGES_AVAILABLE = False
 try:
-    from tree_sitter_languages import get_language, get_parser
+    # 优先尝试 tree-sitter-language-pack（支持更多语言，包括 XML）
+    from tree_sitter_language_pack import get_language, get_parser
     LANGUAGES_AVAILABLE = True
+    LANGUAGE_PACK_SOURCE = 'tree-sitter-language-pack'
+    logger.info("使用 tree-sitter-language-pack（支持 165+ 语言，包括 XML）")
 except ImportError:
-    logger.warning("tree_sitter_languages 未安装，代码解析功能将不可用")
-    LANGUAGES_AVAILABLE = False
+    try:
+        # 降级到 tree-sitter-languages
+        from tree_sitter_languages import get_language, get_parser
+        LANGUAGES_AVAILABLE = True
+        LANGUAGE_PACK_SOURCE = 'tree-sitter-languages'
+        logger.info("使用 tree-sitter-languages（部分语言可能不支持，如 XML）")
+    except ImportError:
+        logger.warning("tree_sitter_language_pack 和 tree_sitter_languages 均未安装，代码解析功能将不可用")
+        LANGUAGES_AVAILABLE = False
+        LANGUAGE_PACK_SOURCE = None
+
+# 尝试导入独立的 XML 解析器
+try:
+    import tree_sitter_xml
+    XML_PARSER_AVAILABLE = True
+except ImportError:
+    XML_PARSER_AVAILABLE = False
 
 
 class CodeParserService:
@@ -32,11 +51,33 @@ class CodeParserService:
     _lock = threading.Lock()
     _initialized = False
     
-    # 支持的语言
+    # 支持的语言及其文件扩展名
     SUPPORTED_LANGUAGES = {
-        'python': ['.py'],
-        'javascript': ['.js', '.jsx', '.mjs'],
-        'typescript': ['.ts', '.tsx']
+        'python': ['.py', '.pyw', '.pyi'],
+        'javascript': ['.js', '.jsx', '.mjs', '.cjs'],
+        'typescript': ['.ts', '.tsx'],
+        'java': ['.java'],
+        'php': ['.php', '.phtml', '.php3', '.php4', '.php5', '.phps'],
+        'ruby': ['.rb', '.rake', '.rbw', '.gemspec'],
+        'c': ['.c', '.h'],
+        'cpp': ['.cpp', '.cc', '.cxx', '.c++', '.hpp', '.hh', '.hxx', '.h++', '.h'],
+        'csharp': ['.cs'],
+        'go': ['.go'],
+        'rust': ['.rs'],
+        'swift': ['.swift'],
+        'kotlin': ['.kt', '.kts'],
+        'scala': ['.scala', '.sc'],
+        'html': ['.html', '.htm', '.xhtml'],
+        'css': ['.css', '.scss', '.sass', '.less'],
+        'json': ['.json'],
+        'yaml': ['.yaml', '.yml'],
+        'xml': ['.xml'],
+        'markdown': ['.md', '.markdown'],
+        'bash': ['.sh', '.bash'],
+        'shell': ['.sh', '.bash', '.zsh', '.fish'],
+        'sql': ['.sql'],
+        'dockerfile': ['Dockerfile', '.dockerfile'],
+        'makefile': ['Makefile', 'makefile', '.mk'],
     }
     
     def __new__(cls):
@@ -70,33 +111,68 @@ class CodeParserService:
         
         # 只在第一次初始化时记录日志
         if not hasattr(CodeParserService, '_languages_loaded'):
-            logger.info("tree-sitter-languages 已加载")
+            if LANGUAGE_PACK_SOURCE == 'tree-sitter-language-pack':
+                logger.info("tree-sitter-language-pack 已加载（支持 165+ 语言，包括 XML）")
+            else:
+                logger.info("tree-sitter-languages 已加载（降级模式）")
             CodeParserService._languages_loaded = True
         
+        # 定义要初始化的语言列表（按优先级排序）
+        languages_to_init = [
+            ('python', 'Python'),
+            ('javascript', 'JavaScript'),
+            ('typescript', 'TypeScript'),
+            ('java', 'Java'),
+            ('php', 'PHP'),
+            ('ruby', 'Ruby'),
+            ('c', 'C'),
+            ('cpp', 'C++'),
+            ('csharp', 'C#'),
+            ('go', 'Go'),
+            ('rust', 'Rust'),
+            ('swift', 'Swift'),
+            ('kotlin', 'Kotlin'),
+            ('scala', 'Scala'),
+            ('html', 'HTML'),
+            ('css', 'CSS'),
+            ('json', 'JSON'),
+            ('yaml', 'YAML'),
+            ('xml', 'XML'),
+            ('markdown', 'Markdown'),
+            ('bash', 'Bash'),
+            ('shell', 'Shell'),
+            ('sql', 'SQL'),
+            ('dockerfile', 'Dockerfile'),
+            ('makefile', 'Makefile'),
+        ]
+        
         try:
-            # Python 解析器
-            try:
-                self.parsers['python'] = get_parser('python')
-                logger.info("✓ Python 解析器初始化成功")
-            except Exception as e:
-                logger.warning(f"Python 解析器初始化失败: {e}")
+            # 尝试初始化所有支持的语言
+            for lang_key, lang_name in languages_to_init:
+                try:
+                    self.parsers[lang_key] = get_parser(lang_key)
+                    logger.info(f"[OK] {lang_name} 解析器初始化成功")
+                except Exception as e:
+                    # 某些语言可能不在 tree-sitter-languages 中，只记录调试信息
+                    logger.debug(f"{lang_name} 解析器初始化失败（可能不支持）: {e}")
             
-            # JavaScript 解析器
-            try:
-                self.parsers['javascript'] = get_parser('javascript')
-                logger.info("✓ JavaScript 解析器初始化成功")
-            except Exception as e:
-                logger.warning(f"JavaScript 解析器初始化失败: {e}")
-            
-            # TypeScript 解析器
-            try:
-                self.parsers['typescript'] = get_parser('typescript')
-                logger.info("✓ TypeScript 解析器初始化成功")
-            except Exception as e:
-                logger.warning(f"TypeScript 解析器初始化失败: {e}")
+            # 如果 XML 解析器未初始化，尝试使用独立的 tree-sitter-xml 包
+            if 'xml' not in self.parsers and XML_PARSER_AVAILABLE:
+                try:
+                    from tree_sitter import Language, Parser
+                    XML_LANGUAGE = Language(tree_sitter_xml.language(), 'xml')
+                    xml_parser = Parser()
+                    xml_parser.set_language(XML_LANGUAGE)
+                    self.parsers['xml'] = xml_parser
+                    logger.info("[OK] XML 解析器（独立包 tree-sitter-xml）初始化成功")
+                except Exception as e:
+                    logger.debug(f"独立 XML 解析器初始化失败: {e}")
             
             if not self.parsers:
-                logger.error("没有可用的解析器，请安装语言库: pip install tree-sitter-languages")
+                logger.error("没有可用的解析器，请安装语言库: pip install tree-sitter-language-pack 或 pip install tree-sitter-languages")
+            else:
+                xml_status = "（含 XML）" if 'xml' in self.parsers else "（XML 不可用，将使用标准库降级处理）"
+                logger.info(f"成功初始化 {len(self.parsers)} 个语言解析器: {', '.join(sorted(self.parsers.keys()))} {xml_status}")
             
         except Exception as e:
             logger.error(f"初始化 Tree-sitter 解析器失败: {e}")
@@ -104,7 +180,7 @@ class CodeParserService:
     
     def detect_language(self, file_path: str) -> Optional[str]:
         """
-        根据文件扩展名检测语言
+        根据文件扩展名或文件名检测语言
         
         Args:
             file_path: 文件路径
@@ -112,8 +188,19 @@ class CodeParserService:
         Returns:
             语言名称，如果不支持则返回 None
         """
+        file_name = Path(file_path).name
         ext = Path(file_path).suffix.lower()
         
+        # 先检查特殊文件名（用于 Dockerfile、Makefile 等）
+        for lang, extensions in self.SUPPORTED_LANGUAGES.items():
+            if file_name in extensions:
+                return lang
+        
+        # 检查 XML 文件（包括 pom.xml, *Mapper.xml, logback-*.xml 等）
+        if ext == '.xml' or file_name.endswith('.xml'):
+            return 'xml'
+        
+        # 再检查扩展名
         for lang, extensions in self.SUPPORTED_LANGUAGES.items():
             if ext in extensions:
                 return lang
@@ -141,9 +228,23 @@ class CodeParserService:
         if language is None:
             language = self.detect_language(file_path)
         
-        if language is None or language not in self.parsers:
+        if language is None:
             logger.warning(f"不支持的语言或文件: {file_path}")
             return None
+        
+        # 如果语言不在解析器中，但检测到了语言类型，返回基本信息（用于 XML、配置文件等）
+        if language not in self.parsers:
+            # 对于某些文件类型（如 XML、配置文件），即使没有解析器也返回基本信息
+            if language in ['xml', 'json', 'yaml', 'markdown']:
+                # 对于 XML，尝试使用标准库提取更多信息
+                if language == 'xml':
+                    return self._parse_xml_with_stdlib(file_path)
+                else:
+                    # 其他配置文件使用基本信息
+                    return self._get_basic_file_info(file_path, language)
+            else:
+                logger.warning(f"不支持的语言或文件: {file_path} (语言: {language}, 解析器未初始化)")
+                return None
         
         try:
             # 读取文件内容
@@ -187,7 +288,7 @@ class CodeParserService:
         
         Args:
             code_content: 代码内容字符串
-            language: 语言类型（python/javascript/typescript）
+            language: 语言类型（支持多种语言：python/javascript/typescript/java/php/ruby/c/cpp等）
             
         Returns:
             解析结果字典，包含 symbols, imports, complexity, lines 等
@@ -221,8 +322,9 @@ class CodeParserService:
             }
             
             # 将 symbols 按类型分组（兼容 code_symbol_service）
-            functions = [s for s in symbols if s.get('type') == 'function']
-            classes = [s for s in symbols if s.get('type') == 'class']
+            # 注意：Java 使用 'method'，其他语言使用 'function'，这里统一收集
+            functions = [s for s in symbols if s.get('type') in ['function', 'method']]
+            classes = [s for s in symbols if s.get('type') in ['class', 'interface']]
             
             result['functions'] = functions
             result['classes'] = classes
@@ -251,6 +353,35 @@ class CodeParserService:
             symbols.extend(self._extract_python_symbols(node, code))
         elif language in ['javascript', 'typescript']:
             symbols.extend(self._extract_js_symbols(node, code))
+        else:
+            # 对于其他语言，动态导入扩展方法
+            try:
+                from app.services.code_parser_service_extensions import (
+                    extract_java_symbols, extract_php_symbols, extract_ruby_symbols,
+                    extract_c_cpp_symbols, extract_csharp_symbols, extract_go_symbols,
+                    extract_rust_symbols, extract_generic_symbols
+                )
+                
+                if language == 'java':
+                    symbols.extend(extract_java_symbols(node, code))
+                elif language == 'php':
+                    symbols.extend(extract_php_symbols(node, code))
+                elif language == 'ruby':
+                    symbols.extend(extract_ruby_symbols(node, code))
+                elif language in ['c', 'cpp']:
+                    symbols.extend(extract_c_cpp_symbols(node, code, language))
+                elif language == 'csharp':
+                    symbols.extend(extract_csharp_symbols(node, code))
+                elif language == 'go':
+                    symbols.extend(extract_go_symbols(node, code))
+                elif language == 'rust':
+                    symbols.extend(extract_rust_symbols(node, code))
+                else:
+                    # 对于其他语言，使用通用符号提取方法
+                    symbols.extend(extract_generic_symbols(node, code, language))
+            except ImportError as e:
+                logger.warning(f"无法导入语言扩展方法: {e}")
+                # 如果导入失败，返回空列表
         
         return symbols
     
@@ -916,6 +1047,35 @@ class CodeParserService:
             imports.extend(self._extract_python_imports(node, code))
         elif language in ['javascript', 'typescript']:
             imports.extend(self._extract_js_imports(node, code))
+        else:
+            # 对于其他语言，动态导入扩展方法
+            try:
+                from app.services.code_parser_service_extensions import (
+                    extract_java_imports, extract_php_imports, extract_ruby_imports,
+                    extract_c_cpp_imports, extract_csharp_imports, extract_go_imports,
+                    extract_rust_imports, extract_generic_imports
+                )
+                
+                if language == 'java':
+                    imports.extend(extract_java_imports(node, code))
+                elif language == 'php':
+                    imports.extend(extract_php_imports(node, code))
+                elif language == 'ruby':
+                    imports.extend(extract_ruby_imports(node, code))
+                elif language in ['c', 'cpp']:
+                    imports.extend(extract_c_cpp_imports(node, code))
+                elif language == 'csharp':
+                    imports.extend(extract_csharp_imports(node, code))
+                elif language == 'go':
+                    imports.extend(extract_go_imports(node, code))
+                elif language == 'rust':
+                    imports.extend(extract_rust_imports(node, code))
+                else:
+                    # 对于其他语言，使用通用导入提取方法
+                    imports.extend(extract_generic_imports(node, code, language))
+            except ImportError as e:
+                logger.warning(f"无法导入语言扩展方法: {e}")
+                # 如果导入失败，返回空列表
         
         return imports
     
@@ -1068,6 +1228,19 @@ class CodeParserService:
                 return self._extract_python_call_relationships(tree.root_node, code_str, file_path)
             elif language in ['javascript', 'typescript']:
                 return self._extract_js_call_relationships(tree.root_node, code_str, file_path)
+            elif language == 'java':
+                try:
+                    from app.services.code_parser_service_extensions import extract_java_call_relationships
+                    return extract_java_call_relationships(tree.root_node, code_str, file_path)
+                except ImportError:
+                    return []
+            elif language in ['c', 'cpp']:
+                try:
+                    from app.services.code_parser_service_extensions import extract_c_cpp_call_relationships
+                    return extract_c_cpp_call_relationships(tree.root_node, code_str, file_path)
+                except ImportError:
+                    return []
+            # 其他语言暂时返回空列表，后续可以扩展
             
             return []
         except Exception as e:
@@ -1208,6 +1381,19 @@ class CodeParserService:
                 return self._extract_python_inheritance_relationships(tree.root_node, code_str, file_path)
             elif language in ['javascript', 'typescript']:
                 return self._extract_js_inheritance_relationships(tree.root_node, code_str, file_path)
+            elif language == 'java':
+                try:
+                    from app.services.code_parser_service_extensions import extract_java_inheritance_relationships
+                    return extract_java_inheritance_relationships(tree.root_node, code_str, file_path)
+                except ImportError:
+                    return []
+            elif language in ['c', 'cpp']:
+                try:
+                    from app.services.code_parser_service_extensions import extract_c_cpp_inheritance_relationships
+                    return extract_c_cpp_inheritance_relationships(tree.root_node, code_str, file_path)
+                except ImportError:
+                    return []
+            # 其他语言暂时返回空列表，后续可以扩展
             
             return []
         except Exception as e:
@@ -1284,3 +1470,110 @@ class CodeParserService:
         
         traverse(node)
         return relationships
+    
+    def _get_basic_file_info(self, file_path: str, language: str) -> Optional[Dict]:
+        """
+        获取文件基本信息（用于没有解析器的配置文件）
+        
+        Args:
+            file_path: 文件路径
+            language: 语言类型
+            
+        Returns:
+            包含基本信息的字典，失败返回 None
+        """
+        try:
+            with open(file_path, 'rb') as f:
+                code = f.read()
+            lines = code.decode('utf-8', errors='ignore').count('\n') + 1
+            
+            return {
+                'file_path': file_path,
+                'language': language,
+                'symbols': [],  # 配置文件通常不需要提取符号
+                'imports': [],
+                'complexity': {'cyclomatic': 0, 'cognitive': 0},
+                'lines': lines,
+                'call_relationships': [],
+                'inheritance_relationships': []
+            }
+        except Exception as e:
+            logger.debug(f"读取文件基本信息失败 {file_path}: {e}")
+            return None
+    
+    def _parse_xml_with_stdlib(self, file_path: str) -> Optional[Dict]:
+        """
+        使用 Python 标准库解析 XML 文件（当 tree-sitter XML 解析器不可用时）
+        
+        Args:
+            file_path: XML 文件路径
+            
+        Returns:
+            包含解析结果的字典，失败返回 None
+        """
+        try:
+            import xml.etree.ElementTree as ET
+            
+            with open(file_path, 'rb') as f:
+                code = f.read()
+            
+            lines = code.decode('utf-8', errors='ignore').count('\n') + 1
+            
+            # 尝试解析 XML 结构
+            xml_elements = []
+            element_count = 0
+            attribute_count = 0
+            max_depth = 0
+            
+            try:
+                root = ET.fromstring(code)
+                
+                def extract_elements(elem, depth=0):
+                    nonlocal element_count, attribute_count, max_depth
+                    if depth > max_depth:
+                        max_depth = depth
+                    
+                    if depth < 5:  # 限制深度避免过大
+                        element_count += 1
+                        attribute_count += len(elem.attrib)
+                        
+                        if depth < 3:  # 只记录前3层的详细信息
+                            xml_elements.append({
+                                'tag': elem.tag,
+                                'attributes': list(elem.attrib.keys()),
+                                'text_length': len(elem.text or '') if elem.text else 0,
+                                'depth': depth
+                            })
+                        
+                        for child in elem:
+                            extract_elements(child, depth + 1)
+                
+                extract_elements(root)
+                
+            except ET.ParseError as e:
+                logger.debug(f"XML 解析失败（可能格式不正确）{file_path}: {e}")
+                # 即使解析失败，也返回基本信息
+            except Exception as e:
+                logger.debug(f"XML 处理异常 {file_path}: {e}")
+            
+            return {
+                'file_path': file_path,
+                'language': 'xml',
+                'symbols': [],  # XML 不使用符号概念
+                'imports': [],
+                'complexity': {'cyclomatic': 0, 'cognitive': 0},
+                'lines': lines,
+                'call_relationships': [],
+                'inheritance_relationships': [],
+                # XML 特定信息
+                'xml_info': {
+                    'element_count': element_count,
+                    'attribute_count': attribute_count,
+                    'max_depth': max_depth,
+                    'top_elements': xml_elements[:10]  # 只保留前10个元素
+                } if xml_elements else None
+            }
+        except Exception as e:
+            logger.debug(f"XML 标准库解析失败 {file_path}: {e}")
+            # 降级到基本信息
+            return self._get_basic_file_info(file_path, 'xml')

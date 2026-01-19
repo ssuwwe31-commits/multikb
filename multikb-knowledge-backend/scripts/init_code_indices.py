@@ -17,8 +17,10 @@ from opensearch_schemas.code_indices import (
     init_code_indices,
     CODE_FILES_INDEX,
     CODE_SYMBOLS_INDEX,
+    CODE_QA_RECORDS_INDEX,
     CODE_FILES_INDEX_CONFIG,
-    CODE_SYMBOLS_INDEX_CONFIG
+    CODE_SYMBOLS_INDEX_CONFIG,
+    CODE_QA_RECORDS_INDEX_CONFIG
 )
 
 
@@ -96,7 +98,34 @@ async def main():
         
         print()
         
-        # 4. 验证索引
+        # 4. 创建代码问答记录索引
+        print(f"[INFO] 创建代码问答记录索引: {CODE_QA_RECORDS_INDEX}")
+        
+        if client.indices.exists(index=CODE_QA_RECORDS_INDEX):
+            print(f"[WARN] 索引已存在: {CODE_QA_RECORDS_INDEX}")
+            
+            user_input = input("是否删除并重建？(y/n): ")
+            if user_input.lower() == 'y':
+                client.indices.delete(index=CODE_QA_RECORDS_INDEX)
+                print(f"[INFO] 已删除旧索引")
+                
+                client.indices.create(
+                    index=CODE_QA_RECORDS_INDEX,
+                    body=CODE_QA_RECORDS_INDEX_CONFIG
+                )
+                print(f"[SUCCESS] 重建索引成功: {CODE_QA_RECORDS_INDEX}")
+            else:
+                print(f"[SKIP] 跳过索引: {CODE_QA_RECORDS_INDEX}")
+        else:
+            client.indices.create(
+                index=CODE_QA_RECORDS_INDEX,
+                body=CODE_QA_RECORDS_INDEX_CONFIG
+            )
+            print(f"[SUCCESS] 创建索引成功: {CODE_QA_RECORDS_INDEX}")
+        
+        print()
+        
+        # 5. 验证索引
         print("[CHECK] 验证创建的索引...")
         
         indices = client.cat.indices(index="code_*", format="json")

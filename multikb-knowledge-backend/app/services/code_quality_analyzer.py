@@ -71,9 +71,9 @@ class CodeQualityAnalyzer:
             symbols = file_data.get('symbols', [])
             complexity = file_data.get('complexity', {})
             
-            # 检测长函数
+            # 检测长函数（包括 Java 的 method）
             for symbol in symbols:
-                if symbol.get('type') == 'function':
+                if symbol.get('type') in ['function', 'method']:
                     func_lines = symbol.get('end_line', 0) - symbol.get('line', 0)
                     if func_lines > 100:
                         smells.append({
@@ -196,6 +196,8 @@ class CodeQualityAnalyzer:
 }}
 """
             
+            logger.info(f"[LLM调用] 重构建议生成使用模型 {settings.CODE_LLM_MODEL}, prompt 长度: {len(prompt)} 字符")
+            
             response = requests.post(
                 f"{settings.OLLAMA_BASE_URL}/api/generate",
                 json={
@@ -208,6 +210,8 @@ class CodeQualityAnalyzer:
             response.raise_for_status()
             result = response.json()
             content = result.get("response", "").strip()
+            
+            logger.info(f"[LLM调用] 重构建议生成成功，响应长度: {len(content)} 字符")
             
             try:
                 json_match = re.search(r'\{.*\}', content, re.DOTALL)

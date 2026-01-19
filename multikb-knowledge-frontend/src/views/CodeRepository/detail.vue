@@ -171,38 +171,13 @@
         <el-descriptions :column="2" border>
           <el-descriptions-item label="文件路径">{{ selectedFile.file_path }}</el-descriptions-item>
           <el-descriptions-item label="语言">{{ selectedFile.language }}</el-descriptions-item>
-          <el-descriptions-item label="代码行数">{{ selectedFile.lines }}</el-descriptions-item>
-          <el-descriptions-item label="复杂度">{{ selectedFile.complexity?.cyclomatic || 0 }}</el-descriptions-item>
+          <el-descriptions-item label="代码行数">
+            {{ getFileLines(selectedFile) }}
+          </el-descriptions-item>
+          <el-descriptions-item label="复杂度">
+            {{ getFileComplexity(selectedFile) }}
+          </el-descriptions-item>
         </el-descriptions>
-
-        <el-divider />
-
-        <h4>符号列表</h4>
-        <el-table :data="selectedFile.symbols" style="width: 100%">
-          <el-table-column prop="type" label="类型" width="100">
-            <template #default="{ row }">
-              <el-tag size="small" :type="row.type === 'function' ? 'primary' : 'success'">
-                {{ row.type }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="name" label="名称" min-width="200" />
-          <el-table-column prop="line" label="行号" width="100" />
-          <el-table-column label="文档字符串" min-width="300">
-            <template #default="{ row }">
-              <span class="docstring">{{ row.docstring || '-' }}</span>
-            </template>
-          </el-table-column>
-        </el-table>
-
-        <el-divider />
-
-        <h4>导入语句</h4>
-        <el-table :data="selectedFile.imports" style="width: 100%">
-          <el-table-column prop="type" label="类型" width="120" />
-          <el-table-column prop="module" label="模块" min-width="200" />
-          <el-table-column prop="line" label="行号" width="100" />
-        </el-table>
 
         <el-divider />
 
@@ -229,7 +204,74 @@
           
           <div v-if="showFileContent" class="file-content-wrapper">
             <div v-loading="fileContentLoading" class="file-content">
-              <pre v-if="fileContent"><code>{{ fileContent }}</code></pre>
+              <div v-if="fileContent" class="code-viewer">
+                <div class="code-toolbar">
+                  <div class="toolbar-left">
+                    <el-button-group>
+                      <el-button 
+                        size="small" 
+                        @click="handleGoToDefinition" 
+                        :disabled="currentLine === 0"
+                        :title="currentLine > 0 ? '跳转到当前选中符号的定义位置' : '请先点击代码中的符号'"
+                      >
+                        <el-icon><Position /></el-icon>
+                        跳转到定义
+                      </el-button>
+                      <el-button 
+                        size="small" 
+                        @click="handleFindReferences" 
+                        :disabled="currentLine === 0"
+                        :title="currentLine > 0 ? '查找当前选中符号的所有引用位置' : '请先点击代码中的符号'"
+                      >
+                        <el-icon><Search /></el-icon>
+                        查找引用
+                      </el-button>
+                      <el-button 
+                        size="small" 
+                        @click="handleShowHoverInfo" 
+                        :disabled="currentLine === 0"
+                        :title="currentLine > 0 ? '查看当前选中符号的详细信息' : '请先点击代码中的符号'"
+                      >
+                        <el-icon><InfoFilled /></el-icon>
+                        查看信息
+                      </el-button>
+                    </el-button-group>
+                    <el-button 
+                      size="small" 
+                      type="primary"
+                      @click="handleExplainCode" 
+                      :disabled="!selectedCode"
+                      :title="selectedCode ? '解释选中的代码' : '请先选中一段代码'"
+                      style="margin-left: 12px;"
+                    >
+                      <el-icon><Document /></el-icon>
+                      解释代码
+                    </el-button>
+                    <el-text v-if="currentLine === 0 && !selectedCode" type="info" size="small" style="margin-left: 12px;">
+                      💡 提示：点击代码中的符号（函数名、类名等）后，即可使用导航功能；或选中代码后使用"解释代码"功能
+                    </el-text>
+                    <el-text v-else-if="currentLine > 0" type="success" size="small" style="margin-left: 12px;">
+                      ✅ 已选择位置: 行 {{ currentLine }}, 列 {{ currentColumn }}，可以使用导航功能
+                    </el-text>
+                    <el-text v-else-if="selectedCode" type="success" size="small" style="margin-left: 12px;">
+                      ✅ 已选中代码（{{ selectedCode.length }} 字符），可以点击"解释代码"
+                    </el-text>
+                  </div>
+                  <span class="code-position" v-if="currentLine > 0">
+                    行 {{ currentLine }}, 列 {{ currentColumn }}
+                  </span>
+                </div>
+                <div ref="codeElement" class="code-container">
+                  <pre 
+                    @click="handleCodeClick"
+                    @mousemove="handleCodeHover"
+                    @mouseup="handleCodeSelection"
+                    class="code-content"
+                  >
+                    <code>{{ fileContent }}</code>
+                  </pre>
+                </div>
+              </div>
               <el-empty v-else description="无法加载文件内容" />
             </div>
           </div>
@@ -237,61 +279,242 @@
       </div>
     </el-dialog>
 
+    <!-- 代码解释对话框 -->
+    <el-dialog
+      v-model="showExplanationDialog"
+      title="📝 代码解释"
+      width="80%"
+      :close-on-click-modal="false"
+    >
+      <div v-loading="explanationLoading">
+        <div v-if="codeExplanation" class="explanation-content">
+          <div class="explanation-header">
+            <el-tag v-if="codeExplanation.language" type="info" style="margin-right: 8px;">
+              {{ codeExplanation.language }}
+            </el-tag>
+            <el-text v-if="codeExplanation.file_path" type="info" size="small">
+              文件: {{ codeExplanation.file_path }}
+            </el-text>
+          </div>
+          <el-divider />
+          <div class="code-section">
+            <h4>选中的代码：</h4>
+            <pre class="code-block"><code>{{ codeExplanation.code }}</code></pre>
+          </div>
+          <el-divider />
+          <div class="explanation-section">
+            <h4>解释：</h4>
+            <div class="explanation-text" v-html="formatExplanation(codeExplanation.explanation)"></div>
+          </div>
+        </div>
+        <el-empty v-else description="暂无解释内容" />
+      </div>
+      <template #footer>
+        <el-button @click="showExplanationDialog = false">关闭</el-button>
+        <el-button type="primary" @click="handleExplainCode" :loading="explanationLoading">
+          重新解释
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 引用列表对话框 -->
+    <el-dialog
+      v-model="showReferencesDialog"
+      title="引用位置"
+      width="80%"
+      :close-on-click-modal="false"
+    >
+      <div v-if="referencesList.length > 0">
+        <el-table :data="referencesList" stripe style="width: 100%">
+          <el-table-column prop="file_path" label="文件路径" min-width="300" />
+          <el-table-column prop="line" label="行号" width="100" />
+          <el-table-column prop="type" label="类型" width="120">
+            <template #default="{ row }">
+              <el-tag :type="getReferenceTypeTag(row.type)">
+                {{ getReferenceTypeLabel(row.type) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="context" label="上下文" min-width="400">
+            <template #default="{ row }">
+              <pre class="context-preview">{{ row.context || '无' }}</pre>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="150" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                size="small"
+                type="primary"
+                @click="navigateToReference(row)"
+              >
+                跳转
+              </el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+      <el-empty v-else description="未找到引用位置" />
+    </el-dialog>
+
     <!-- 问答对话框 -->
     <el-dialog
       v-model="showQADialog"
-      title="代码问答"
-      width="70%"
+      title="💬 代码智能问答"
+      width="85%"
       :close-on-click-modal="false"
+      class="qa-dialog"
     >
+      <template #header>
+        <div class="dialog-header">
+          <div class="header-left">
+            <el-icon class="header-icon"><ChatDotRound /></el-icon>
+            <span class="header-title">代码智能问答</span>
+            <el-tag size="small" type="success" effect="plain">AI 助手</el-tag>
+          </div>
+          <div class="header-actions">
+            <el-button 
+              text 
+              size="small" 
+              @click="qaHistory = []"
+              :disabled="qaHistory.length === 0"
+            >
+              <el-icon><Delete /></el-icon>
+              清空对话
+            </el-button>
+          </div>
+        </div>
+      </template>
+      
       <div class="qa-container">
         <!-- 历史对话 -->
         <div class="qa-history" ref="qaHistoryRef">
+          <!-- 空状态 -->
+          <div v-if="qaHistory.length === 0" class="empty-state">
+            <div class="empty-icon">
+              <el-icon :size="64"><ChatDotRound /></el-icon>
+            </div>
+            <h3 class="empty-title">开始你的代码问答之旅</h3>
+            <p class="empty-description">你可以询问关于代码库的任何问题，比如：</p>
+            <div class="example-questions">
+              <el-tag 
+                v-for="(example, idx) in exampleQuestions" 
+                :key="idx"
+                class="example-tag"
+                @click="currentQuestion = example"
+                effect="plain"
+              >
+                {{ example }}
+              </el-tag>
+            </div>
+          </div>
+          
+          <!-- 对话列表 -->
           <div
             v-for="(item, index) in qaHistory"
             :key="index"
             class="qa-item"
           >
-            <div class="question">
-              <el-icon><ChatDotRound /></el-icon>
-              <span>{{ item.question }}</span>
+            <!-- 问题 -->
+            <div class="message-bubble question-bubble">
+              <div class="bubble-avatar user-avatar">
+                <el-icon><User /></el-icon>
+              </div>
+              <div class="bubble-content">
+                <div class="bubble-header">
+                  <span class="bubble-name">你</span>
+                  <span class="bubble-time">{{ formatTime(item.created_at) }}</span>
+                </div>
+                <div class="bubble-text">{{ item.question }}</div>
+              </div>
             </div>
-            <div class="answer">
-              <el-icon><Document /></el-icon>
-              <div v-html="formatAnswer(item.answer)"></div>
-              <div class="sources" v-if="item.sources && item.sources.length">
-                <span>相关文件：</span>
-                <el-tag
-                  v-for="(file, idx) in item.sources"
-                  :key="idx"
-                  size="small"
-                  style="margin-right: 5px"
-                >
-                  {{ file }}
-                </el-tag>
+            
+            <!-- 答案 -->
+            <div class="message-bubble answer-bubble">
+              <div class="bubble-avatar ai-avatar">
+                <el-icon><ChatDotRound /></el-icon>
+              </div>
+              <div class="bubble-content">
+                <div class="bubble-header">
+                  <span class="bubble-name">AI 助手</span>
+                  <span class="bubble-time">{{ formatTime(item.created_at) }}</span>
+                </div>
+                <div 
+                  class="bubble-text answer-content markdown-body"
+                  v-html="formatAnswer(item.answer)"
+                  :data-qa-index="index"
+                ></div>
+                <div class="sources" v-if="item.sources && item.sources.length">
+                  <el-divider content-position="left" style="margin: 12px 0;">
+                    <span style="font-size: 12px; color: #909399;">参考来源</span>
+                  </el-divider>
+                  <div class="sources-list">
+                    <el-tag
+                      v-for="(file, idx) in item.sources"
+                      :key="idx"
+                      size="small"
+                      type="info"
+                      effect="plain"
+                      class="source-tag clickable"
+                      @click="handleSourceFileClick(file)"
+                    >
+                      <el-icon><Document /></el-icon>
+                      {{ file }}
+                    </el-tag>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 加载状态 -->
+          <div v-if="qaLoading" class="loading-bubble">
+            <div class="bubble-avatar ai-avatar">
+              <el-icon><ChatDotRound /></el-icon>
+            </div>
+            <div class="bubble-content">
+              <div class="typing-indicator">
+                <span></span>
+                <span></span>
+                <span></span>
               </div>
             </div>
           </div>
         </div>
 
         <!-- 输入框 -->
-        <div class="qa-input">
-          <el-input
-            v-model="currentQuestion"
-            placeholder="输入你的问题..."
-            @keyup.enter="handleAskQuestion"
-            :disabled="qaLoading"
-          >
-            <template #append>
+        <div class="qa-input-area">
+          <div class="input-wrapper">
+            <el-input
+              v-model="currentQuestion"
+              type="textarea"
+              :rows="3"
+              placeholder="输入你的问题，按 Ctrl+Enter 发送..."
+              @keydown.ctrl.enter="handleAskQuestion"
+              @keydown.meta.enter="handleAskQuestion"
+              :disabled="qaLoading"
+              class="question-input"
+              resize="none"
+            />
+            <div class="input-actions">
+              <div class="input-tips">
+                <el-text size="small" type="info">
+                  <el-icon><InfoFilled /></el-icon>
+                  支持 Markdown 和流程图
+                </el-text>
+              </div>
               <el-button
+                type="primary"
                 :icon="ChatDotRound"
                 @click="handleAskQuestion"
                 :loading="qaLoading"
+                :disabled="!currentQuestion.trim()"
+                class="send-button"
+                size="large"
               >
-                提问
+                {{ qaLoading ? '思考中...' : '发送' }}
               </el-button>
-            </template>
-          </el-input>
+            </div>
+          </div>
         </div>
       </div>
     </el-dialog>
@@ -299,14 +522,23 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { Refresh, Back, ChatDotRound, Search, Document } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Refresh, Back, ChatDotRound, Search, Document, Delete, User, InfoFilled, Position } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import * as codeRepositoryApi from '@/api/modules/code-repository'
-import type { CodeRepository, CodeStructure, DependencyGraph, QAResult, WikiContent } from '@/api/modules/code-repository'
+import type { CodeRepository, CodeStructure, DependencyGraph, QAResult, WikiContent, NavigationLocation, HoverInfo, CodeExplanationResponse } from '@/api/modules/code-repository'
 import CodeStructureWiki from '@/components/CodeRepository/CodeStructureWiki.vue'
+import { marked } from 'marked'
+
+// 配置 marked
+marked.setOptions({
+  breaks: true,
+  gfm: true,
+  headerIds: false,
+  mangle: false
+})
 
 const route = useRoute()
 const router = useRouter()
@@ -331,6 +563,19 @@ const selectedFile = ref<any>()
 const fileContent = ref('')
 const fileContentLoading = ref(false)
 const showFileContent = ref(false)
+const codeElement = ref<HTMLElement>()
+const currentLine = ref(0)
+const currentColumn = ref(0)
+const canNavigate = ref(false)
+const showReferencesDialog = ref(false)
+const referencesList = ref<NavigationLocation[]>([])
+const targetLine = ref(0) // 用于滚动到指定行
+
+// 代码解释相关
+const selectedCode = ref('') // 选中的代码
+const showExplanationDialog = ref(false)
+const explanationLoading = ref(false)
+const codeExplanation = ref<CodeExplanationResponse | null>(null)
 
 // 依赖关系数据
 const dependenciesLoading = ref(false)
@@ -341,6 +586,66 @@ const showQADialog = ref(false)
 const currentQuestion = ref('')
 const qaHistory = ref<QAResult[]>([])
 const qaLoading = ref(false)
+const qaHistoryRef = ref<HTMLElement>()
+const currentSessionId = ref<string | null>(null) // 当前会话ID
+
+// 示例问题
+const exampleQuestions = [
+  '这个项目的架构是什么样的？',
+  '如何启动这个项目？',
+  '主要的依赖有哪些？',
+  '核心功能是如何实现的？',
+  '数据库设计是怎样的？'
+]
+
+// 格式化时间
+const formatTime = (dateStr?: string) => {
+  if (!dateStr) return ''
+  const date = new Date(dateStr)
+  const now = new Date()
+  const diff = now.getTime() - date.getTime()
+  const minutes = Math.floor(diff / (1000 * 60))
+  
+  if (minutes < 1) return '刚刚'
+  if (minutes < 60) return `${minutes} 分钟前`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} 小时前`
+  return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+// 监听问答历史变化，重新渲染 Mermaid
+watch(() => qaHistory.value.length, async () => {
+  if (qaHistory.value.length > 0) {
+    await nextTick()
+    setTimeout(() => {
+      renderAllMermaidDiagrams()
+    }, 200)
+  }
+})
+
+// 监听 canNavigate 状态变化（用于调试）
+watch(() => canNavigate.value, (newVal) => {
+  console.log('canNavigate 状态变化:', newVal, 'currentLine:', currentLine.value)
+})
+
+// 监听 currentLine 状态变化（用于调试）
+watch(() => currentLine.value, (newVal) => {
+  console.log('currentLine 状态变化:', newVal)
+  if (newVal > 0 && !canNavigate.value) {
+    console.log('检测到 currentLine > 0 但 canNavigate 为 false，自动启用')
+    canNavigate.value = true
+  }
+})
+
+// 监听对话框显示，渲染 Mermaid
+watch(showQADialog, async (visible) => {
+  if (visible && qaHistory.value.length > 0) {
+    await nextTick()
+    setTimeout(() => {
+      renderAllMermaidDiagrams()
+    }, 300)
+  }
+})
 
 // ECharts 实例
 const languagesChartRef = ref()
@@ -697,6 +1002,44 @@ const getServiceTagType = (serviceType: string): string => {
   return typeMap[serviceType] || 'info'
 }
 
+// 获取文件行数
+const getFileLines = (file: any): string => {
+  if (!file) return '-'
+  // 尝试多种可能的字段名
+  if (file.lines !== undefined && file.lines !== null) {
+    return file.lines.toString()
+  }
+  if (file.lines_count !== undefined && file.lines_count !== null) {
+    return file.lines_count.toString()
+  }
+  // 如果有文件内容，计算行数
+  if (fileContent.value) {
+    return fileContent.value.split('\n').length.toString()
+  }
+  return '-'
+}
+
+// 获取文件复杂度
+const getFileComplexity = (file: any): string => {
+  if (!file) return '-'
+  // 尝试多种可能的字段名和结构
+  if (file.complexity) {
+    if (typeof file.complexity === 'number') {
+      return file.complexity.toString()
+    }
+    if (file.complexity.cyclomatic !== undefined) {
+      return file.complexity.cyclomatic.toString()
+    }
+    if (file.complexity.total !== undefined) {
+      return file.complexity.total.toString()
+    }
+  }
+  if (file.complexity_score !== undefined && file.complexity_score !== null) {
+    return file.complexity_score.toString()
+  }
+  return '-'
+}
+
 // 查看文件详情
 const viewFileDetail = (file: any) => {
   selectedFile.value = file
@@ -721,6 +1064,20 @@ const loadFileContent = async () => {
     if (res.data && res.data.content) {
       fileContent.value = res.data.content
       showFileContent.value = true
+      
+      // 如果文件没有行数信息，从内容计算
+      if (!selectedFile.value.lines && !selectedFile.value.lines_count) {
+        const lineCount = fileContent.value.split('\n').length
+        // 更新 selectedFile 的行数（仅用于显示）
+        if (!selectedFile.value.lines) {
+          selectedFile.value.lines = lineCount
+        }
+      }
+      
+      // 重置导航状态
+      currentLine.value = 0
+      currentColumn.value = 0
+      canNavigate.value = false
     } else {
       ElMessage.warning('文件内容为空')
     }
@@ -729,6 +1086,572 @@ const loadFileContent = async () => {
     ElMessage.error(error.message || '加载文件内容失败')
   } finally {
     fileContentLoading.value = false
+  }
+}
+
+// 处理代码点击（获取行号和列号）
+const handleCodeClick = (event: MouseEvent) => {
+  console.log('代码点击事件触发', event)
+  
+  // 阻止事件冒泡，避免触发其他点击事件
+  event.stopPropagation()
+  
+  // 直接使用 event.currentTarget（pre 元素）
+  const pre = event.currentTarget as HTMLElement
+  
+  if (!pre || pre.tagName !== 'PRE') {
+    console.warn('未找到 pre 元素')
+    return
+  }
+  
+  const text = fileContent.value
+  if (!text) {
+    console.warn('文件内容为空')
+    ElMessage.warning('文件内容为空，无法选择位置')
+    return
+  }
+  
+  const lines = text.split('\n')
+  
+  // 计算点击位置对应的行号和列号
+  const rect = pre.getBoundingClientRect()
+  const x = event.clientX - rect.left
+  const y = event.clientY - rect.top
+  
+  // 获取实际的行高和字符宽度
+  const computedStyle = window.getComputedStyle(pre)
+  const lineHeight = parseFloat(computedStyle.lineHeight) || 20
+  const fontSize = parseFloat(computedStyle.fontSize) || 14
+  const charWidth = fontSize * 0.6 // 估算字符宽度（等宽字体约为字体大小的 0.6 倍）
+  
+  // 考虑滚动位置
+  const scrollTop = pre.scrollTop || 0
+  const relativeY = y + scrollTop
+  
+  // 计算行号（从1开始）
+  const line = Math.max(1, Math.floor(relativeY / lineHeight) + 1)
+  
+  // 计算列号（从0开始）
+  // 获取当前行的文本
+  const currentLineText = lines[line - 1] || ''
+  // 计算点击位置对应的列号
+  const paddingLeft = parseFloat(computedStyle.paddingLeft) || 0
+  const relativeX = x - paddingLeft
+  const column = Math.max(0, Math.floor(relativeX / charWidth))
+  
+  // 确保行号和列号在有效范围内
+  const validLine = Math.min(line, lines.length)
+  const validColumn = Math.min(column, currentLineText.length)
+  
+  console.log('计算的位置信息:', {
+    x, y, relativeY, relativeX,
+    lineHeight, fontSize, charWidth,
+    validLine, validColumn,
+    currentLineText: currentLineText.substring(0, 50),
+    scrollTop
+  })
+  
+  // 更新状态（直接设置，Vue 会自动响应）
+  currentLine.value = validLine
+  currentColumn.value = validColumn
+  canNavigate.value = true
+  
+  console.log('状态已更新:', {
+    canNavigate: canNavigate.value,
+    currentLine: currentLine.value,
+    currentColumn: currentColumn.value
+  })
+  
+  // 高亮当前行（可选）
+  highlightCurrentLine(validLine)
+  
+  // 使用 nextTick 确保 DOM 更新后再显示消息
+  nextTick(() => {
+    ElMessage.success({
+      message: `已选择位置: 行 ${validLine}, 列 ${validColumn}，现在可以使用导航功能了`,
+      duration: 2000
+    })
+  })
+}
+
+// 高亮当前行
+const highlightCurrentLine = (line: number) => {
+  if (!codeElement.value) return
+  
+  // 移除之前的高亮
+  const pre = codeElement.value.querySelector('pre')
+  if (!pre) return
+  
+  // 简单的行高亮：可以通过添加背景色实现
+  // 这里只是标记，实际高亮可以通过 CSS 实现
+}
+
+// 处理代码悬停
+const handleCodeHover = (event: MouseEvent) => {
+  // 可以在这里实现悬停显示信息的功能
+}
+
+// 处理代码选择
+const handleCodeSelection = (event: MouseEvent) => {
+  // 等待一小段时间，确保选择完成
+  setTimeout(() => {
+    const selection = window.getSelection()
+    if (!selection || selection.rangeCount === 0) {
+      selectedCode.value = ''
+      return
+    }
+    
+    const range = selection.getRangeAt(0)
+    const selectedText = range.toString().trim()
+    
+    // 检查选择是否在代码区域内
+    const codeContainer = codeElement.value?.querySelector('pre')
+    if (!codeContainer) {
+      selectedCode.value = ''
+      return
+    }
+    
+    // 检查选择是否在代码元素内
+    if (codeContainer.contains(range.commonAncestorContainer) || 
+        codeContainer === range.commonAncestorContainer) {
+      if (selectedText && selectedText.length > 0) {
+        selectedCode.value = selectedText
+        console.log('选中代码:', selectedText.substring(0, 100))
+      } else {
+        selectedCode.value = ''
+      }
+    } else {
+      selectedCode.value = ''
+    }
+  }, 50)
+}
+
+// 解释代码
+const handleExplainCode = async () => {
+  if (!selectedCode.value || selectedCode.value.trim().length === 0) {
+    ElMessage.warning('请先选中一段代码')
+    return
+  }
+  
+  if (!selectedFile.value) {
+    ElMessage.warning('请先选择文件')
+    return
+  }
+  
+  explanationLoading.value = true
+  showExplanationDialog.value = true
+  
+  try {
+    // 检测编程语言（从文件路径或文件扩展名）
+    let language: string | undefined = undefined
+    if (selectedFile.value.file_path) {
+      const ext = selectedFile.value.file_path.split('.').pop()?.toLowerCase()
+      const languageMap: Record<string, string> = {
+        'py': 'python',
+        'js': 'javascript',
+        'ts': 'typescript',
+        'java': 'java',
+        'cpp': 'cpp',
+        'c': 'c',
+        'go': 'go',
+        'rs': 'rust',
+        'php': 'php',
+        'rb': 'ruby',
+        'swift': 'swift',
+        'kt': 'kotlin',
+        'scala': 'scala',
+        'vue': 'vue',
+        'tsx': 'tsx',
+        'jsx': 'jsx',
+        'html': 'html',
+        'css': 'css',
+        'scss': 'scss',
+        'sql': 'sql',
+        'sh': 'bash',
+        'bash': 'bash',
+        'yaml': 'yaml',
+        'yml': 'yaml',
+        'json': 'json',
+        'xml': 'xml',
+        'md': 'markdown'
+      }
+      language = languageMap[ext || ''] || ext
+    }
+    
+    const res = await codeRepositoryApi.explainCode(repoId.value, {
+      code: selectedCode.value,
+      file_path: selectedFile.value.file_path,
+      language: language
+    })
+    
+    if (res.data) {
+      codeExplanation.value = res.data
+      ElMessage.success('代码解释生成成功')
+    } else {
+      ElMessage.error('获取代码解释失败')
+    }
+  } catch (error: any) {
+    console.error('解释代码失败:', error)
+    ElMessage.error(error.message || '解释代码失败')
+    codeExplanation.value = null
+  } finally {
+    explanationLoading.value = false
+  }
+}
+
+// 格式化解释文本（Markdown 转 HTML）
+const formatExplanation = (text: string) => {
+  if (!text) return ''
+  
+  // 简单的 Markdown 转 HTML
+  return text
+    .replace(/\n\n/g, '</p><p>')
+    .replace(/\n/g, '<br/>')
+    .replace(/### (.*?)(<br\/>|$)/g, '<h4>$1</h4>')
+    .replace(/## (.*?)(<br\/>|$)/g, '<h3>$1</h3>')
+    .replace(/# (.*?)(<br\/>|$)/g, '<h2>$1</h2>')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    .replace(/`([^`]+)`/g, '<code style="background: #f5f7fa; padding: 2px 6px; border-radius: 3px; font-family: monospace;">$1</code>')
+    .replace(/```([^`]+)```/g, '<pre style="background: #f5f7fa; padding: 10px; border-radius: 4px; overflow-x: auto;"><code>$1</code></pre>')
+    .replace(/^(.+)$/, '<p>$1</p>')
+}
+
+// 跳转到定义
+const handleGoToDefinition = async () => {
+  if (!selectedFile.value) {
+    ElMessage.warning('请先选择文件')
+    return
+  }
+  
+  if (currentLine.value === 0) {
+    ElMessage.info('请先点击代码中的符号（函数名、类名等），然后再点击此按钮')
+    return
+  }
+  
+  try {
+    const res = await codeRepositoryApi.getDefinition({
+      repository_id: repoId.value,
+      file_path: selectedFile.value.file_path,
+      line: currentLine.value,
+      column: currentColumn.value
+    })
+    
+    if (res.data) {
+      const definition = res.data
+      
+      // 检查是否是定义位置本身
+      if (definition.is_definition) {
+        ElMessage.info(definition.message || '当前位置就是定义位置，无需跳转')
+        return
+      }
+      
+      // 如果定义在其他文件，导航到该文件
+      if (definition.file_path !== selectedFile.value.file_path) {
+        // 跨文件导航
+        await navigateToFile(definition.file_path, definition.line)
+        ElMessage.success(`已跳转到定义: ${definition.file_path}:${definition.line}`)
+      } else {
+        // 同一文件，检查是否是同一行
+        if (definition.line === currentLine.value) {
+          ElMessage.info('当前位置就是定义位置')
+          return
+        }
+        // 滚动到定义位置
+        targetLine.value = definition.line
+        await scrollToLine(definition.line)
+        ElMessage.success(`已跳转到定义: 第 ${definition.line} 行`)
+      }
+    } else {
+      ElMessage.warning('未找到符号定义')
+    }
+  } catch (error: any) {
+    console.error('获取定义失败:', error)
+    ElMessage.error(error.message || '获取定义失败')
+  }
+}
+
+// 查找所有引用
+const handleFindReferences = async () => {
+  if (!selectedFile.value) {
+    ElMessage.warning('请先选择文件')
+    return
+  }
+  
+  if (currentLine.value === 0) {
+    ElMessage.info('请先点击代码中的符号（函数名、类名等），然后再点击此按钮')
+    return
+  }
+  
+  try {
+    const res = await codeRepositoryApi.getReferences({
+      repository_id: repoId.value,
+      file_path: selectedFile.value.file_path,
+      line: currentLine.value,
+      column: currentColumn.value,
+      include_definition: true
+    })
+    
+    if (res.data && res.data.references && res.data.references.length > 0) {
+      referencesList.value = res.data.references
+      showReferencesDialog.value = true
+      ElMessage.success(`找到 ${res.data.references.length} 个引用位置`)
+    } else {
+      ElMessage.warning('未找到引用位置')
+    }
+  } catch (error: any) {
+    console.error('获取引用失败:', error)
+    ElMessage.error(error.message || '获取引用失败')
+  }
+}
+
+// 显示悬停信息
+const handleShowHoverInfo = async () => {
+  if (!selectedFile.value) {
+    ElMessage.warning('请先选择文件')
+    return
+  }
+  
+  if (currentLine.value === 0) {
+    ElMessage.info('请先点击代码中的符号（函数名、类名等），然后再点击此按钮')
+    return
+  }
+  
+  try {
+    const res = await codeRepositoryApi.getHoverInfo({
+      repository_id: repoId.value,
+      file_path: selectedFile.value.file_path,
+      line: currentLine.value,
+      column: currentColumn.value
+    })
+    
+    if (res.data) {
+      const info = res.data
+      // 显示悬停信息对话框
+      ElMessageBox.alert(
+        `<div style="line-height: 1.8;">
+          <p><strong>符号:</strong> ${info.symbol_name}</p>
+          <p><strong>完整名称:</strong> ${info.qualified_name}</p>
+          <p><strong>类型:</strong> ${info.symbol_type}</p>
+          <p><strong>签名:</strong> <code style="background: #f5f7fa; padding: 2px 6px; border-radius: 3px;">${info.signature || '无'}</code></p>
+          ${info.docstring ? `<p><strong>说明:</strong><br/><pre style="background: #f5f7fa; padding: 10px; border-radius: 4px; white-space: pre-wrap;">${info.docstring}</pre></p>` : ''}
+          ${info.file_path ? `<p><strong>位置:</strong> ${info.file_path}:${info.line || '?'}</p>` : ''}
+        </div>`,
+        '符号信息',
+        {
+          dangerouslyUseHTMLString: true,
+          confirmButtonText: '确定',
+          customStyle: {
+            width: '600px'
+          }
+        }
+      )
+    } else {
+      ElMessage.warning('未找到符号信息')
+    }
+  } catch (error: any) {
+    console.error('获取悬停信息失败:', error)
+    ElMessage.error(error.message || '获取悬停信息失败')
+  }
+}
+
+// 导航到引用位置
+const navigateToReference = async (ref: NavigationLocation) => {
+  showReferencesDialog.value = false
+  
+  // 如果引用在其他文件，导航到该文件
+  if (ref.file_path !== selectedFile.value?.file_path) {
+    await navigateToFile(ref.file_path, ref.line)
+  } else {
+    // 同一文件，滚动到引用位置
+    targetLine.value = ref.line
+    await scrollToLine(ref.line)
+  }
+  
+  ElMessage.success(`已跳转到: ${ref.file_path}:${ref.line}`)
+}
+
+// 导航到文件（跨文件导航）
+const navigateToFile = async (filePath: string, line?: number) => {
+  try {
+    console.log('开始导航到文件:', filePath, '行号:', line)
+    
+    // 确保代码结构已加载
+    if (!codeStructure.value?.files || codeStructure.value.files.length === 0) {
+      console.log('代码结构未加载，开始加载...')
+      await loadStructure()
+      // 等待结构加载完成
+      await nextTick()
+    }
+    
+    console.log('代码结构文件数量:', codeStructure.value?.files?.length || 0)
+    console.log('查找文件路径:', filePath)
+    
+    const file = findFileByPath(filePath)
+    console.log('找到的文件:', file)
+    
+    if (file) {
+      console.log('打开文件对话框:', file.file_path)
+      // 打开文件对话框
+      viewFileDetail(file)
+      await nextTick()
+      
+      // 加载文件内容
+      console.log('加载文件内容...')
+      await loadFileContent()
+      
+      // 等待文件内容加载完成
+      await nextTick()
+      // 额外等待，确保 DOM 已更新
+      await new Promise(resolve => setTimeout(resolve, 100))
+      
+      // 如果有行号，滚动到指定行
+      if (line) {
+        console.log('滚动到行:', line)
+        targetLine.value = line
+        await scrollToLine(line)
+      }
+      
+      console.log('文件导航完成')
+    } else {
+      console.error('未找到文件，可用文件列表:', codeStructure.value?.files?.map((f: any) => f.file_path).slice(0, 10))
+      ElMessage.warning(`未找到文件: ${filePath}`)
+    }
+  } catch (error: any) {
+    console.error('导航到文件失败:', error)
+    ElMessage.error(`导航到文件失败: ${error.message || '未知错误'}`)
+  }
+}
+
+// 滚动到指定行
+const scrollToLine = async (line: number) => {
+  console.log('开始滚动到行:', line)
+  
+  // 多次尝试，确保 DOM 已准备好
+  let attempts = 0
+  const maxAttempts = 10
+  
+  while (attempts < maxAttempts) {
+    await nextTick()
+    await new Promise(resolve => setTimeout(resolve, 50))
+    
+    if (!codeElement.value) {
+      console.log(`尝试 ${attempts + 1}/${maxAttempts}: codeElement 未准备好`)
+      attempts++
+      continue
+    }
+    
+    const pre = codeElement.value.querySelector('pre')
+    if (!pre) {
+      console.log(`尝试 ${attempts + 1}/${maxAttempts}: pre 元素未找到`)
+      attempts++
+      continue
+    }
+    
+    // 获取实际的行高
+    const computedStyle = window.getComputedStyle(pre)
+    const lineHeight = parseFloat(computedStyle.lineHeight) || 20
+    const fontSize = parseFloat(computedStyle.fontSize) || 14
+    const actualLineHeight = lineHeight || fontSize * 1.5
+    
+    console.log('行高:', actualLineHeight, '字体大小:', fontSize)
+    
+    // 计算目标行的位置
+    const targetPosition = (line - 1) * actualLineHeight
+    
+    // 滚动到目标位置
+    const container = codeElement.value.closest('.file-content-wrapper') as HTMLElement
+    if (container) {
+      console.log('滚动容器找到，当前 scrollTop:', container.scrollTop, '目标位置:', targetPosition)
+      container.scrollTop = targetPosition - 50 // 留出一些顶部空间
+      console.log('滚动完成，新 scrollTop:', container.scrollTop)
+      
+      // 高亮目标行（可选）
+      highlightLine(line)
+      return
+    } else {
+      console.log(`尝试 ${attempts + 1}/${maxAttempts}: 容器未找到`)
+    }
+    
+    attempts++
+  }
+  
+  console.warn('滚动失败：DOM 元素未准备好')
+}
+
+// 高亮指定行
+const highlightLine = (line: number) => {
+  if (!codeElement.value) return
+  
+  // 移除之前的高亮
+  const pre = codeElement.value.querySelector('pre')
+  if (!pre) return
+  
+  // 简单的行高亮实现：通过添加标记
+  // 注意：这里只是简单实现，实际可以使用更复杂的代码编辑器
+  const lines = fileContent.value.split('\n')
+  if (line > 0 && line <= lines.length) {
+    // 可以在这里添加高亮逻辑
+    // 例如：在行号旁边添加标记，或者使用代码编辑器的高亮功能
+  }
+}
+
+// 获取引用类型标签
+const getReferenceTypeTag = (type: string) => {
+  const typeMap: Record<string, string> = {
+    'definition': 'success',
+    'call': 'primary',
+    'reference': 'info'
+  }
+  return typeMap[type] || 'info'
+}
+
+// 获取引用类型标签文本
+const getReferenceTypeLabel = (type: string) => {
+  const labelMap: Record<string, string> = {
+    'definition': '定义',
+    'call': '调用',
+    'reference': '引用'
+  }
+  return labelMap[type] || type
+}
+
+// 清空问答历史
+const handleClearQAHistory = () => {
+  qaHistory.value = []
+  currentSessionId.value = null
+  
+  // 清除 localStorage
+  const storageKey = `qa_session_${repoId.value}`
+  localStorage.removeItem(storageKey)
+  
+  // 清除所有相关的历史记录备份
+  Object.keys(localStorage).forEach(key => {
+    if (key.startsWith(`qa_history_${repoId.value}_`)) {
+      localStorage.removeItem(key)
+    }
+  })
+  
+  ElMessage.success('已清空问答历史')
+}
+
+// 处理参考来源文件点击
+const handleSourceFileClick = async (filePath: string) => {
+  console.log('点击参考来源文件:', filePath)
+  
+  try {
+    // 确保在代码结构标签页
+    if (activeTab.value !== 'structure') {
+      activeTab.value = 'structure'
+      // 等待标签页切换
+      await nextTick()
+    }
+    
+    // 导航到文件
+    await navigateToFile(filePath)
+  } catch (error: any) {
+    console.error('打开参考来源文件失败:', error)
+    ElMessage.error(`打开文件失败: ${error.message || '未知错误'}`)
   }
 }
 
@@ -780,6 +1703,107 @@ const handleWikiRefresh = async () => {
   }
 }
 
+// 加载问答历史记录
+const loadQAHistory = async () => {
+  try {
+    // 1. 尝试从 localStorage 恢复会话ID
+    const storageKey = `qa_session_${repoId.value}`
+    const savedSessionId = localStorage.getItem(storageKey)
+    
+    if (savedSessionId) {
+      currentSessionId.value = savedSessionId
+      
+      try {
+        // 2. 从后端加载历史记录
+        const res = await codeRepositoryApi.getQARecords(savedSessionId, {
+          page: 1,
+          page_size: 100 // 加载最近100条记录
+        })
+        
+        if (res.data && res.data.records && res.data.records.length > 0) {
+          // 转换格式以匹配前端显示
+          qaHistory.value = res.data.records.map((record: any) => ({
+            question: record.question,
+            answer: record.answer,
+            sources: record.sources || [],
+            created_at: record.created_at
+          }))
+          
+          console.log('已从后端加载历史问答记录:', qaHistory.value.length, '条')
+          
+          // 等待 DOM 更新后渲染 Mermaid
+          await nextTick()
+          setTimeout(() => {
+            renderAllMermaidDiagrams()
+          }, 200)
+          return
+        }
+      } catch (backendError) {
+        console.warn('从后端加载历史记录失败，尝试从 localStorage 恢复:', backendError)
+      }
+      
+      // 3. 如果后端加载失败，尝试从 localStorage 恢复（作为备份）
+      const historyKey = `qa_history_${repoId.value}_${savedSessionId}`
+      const savedHistory = localStorage.getItem(historyKey)
+      if (savedHistory) {
+        try {
+          qaHistory.value = JSON.parse(savedHistory)
+          console.log('已从 localStorage 恢复历史问答记录:', qaHistory.value.length, '条')
+          
+          // 等待 DOM 更新后渲染 Mermaid
+          await nextTick()
+          setTimeout(() => {
+            renderAllMermaidDiagrams()
+          }, 200)
+        } catch (parseError) {
+          console.warn('解析 localStorage 历史记录失败:', parseError)
+        }
+      }
+    }
+  } catch (error: any) {
+    console.warn('加载问答历史失败:', error)
+    // 失败不影响使用，继续使用空历史
+  }
+}
+
+// 创建或获取会话ID
+const getOrCreateSessionId = async (): Promise<string> => {
+  if (currentSessionId.value) {
+    return currentSessionId.value
+  }
+  
+  try {
+    // 尝试从 localStorage 恢复
+    const storageKey = `qa_session_${repoId.value}`
+    const savedSessionId = localStorage.getItem(storageKey)
+    
+    if (savedSessionId) {
+      currentSessionId.value = savedSessionId
+      return savedSessionId
+    }
+    
+    // 创建新会话
+    const res = await codeRepositoryApi.createQASession(repoId.value, {
+      session_name: `代码问答 - ${new Date().toLocaleString('zh-CN')}`
+    })
+    
+    if (res.data && res.data.session_id) {
+      currentSessionId.value = res.data.session_id
+      // 保存到 localStorage
+      localStorage.setItem(storageKey, res.data.session_id)
+      return res.data.session_id
+    }
+    
+    throw new Error('创建会话失败')
+  } catch (error: any) {
+    console.error('获取会话ID失败:', error)
+    // 如果创建失败，生成一个临时ID（仅用于前端显示）
+    const tempId = `temp_${Date.now()}`
+    currentSessionId.value = tempId
+    return tempId
+  }
+}
+
 // 问答功能
 const handleAskQuestion = async () => {
   if (!currentQuestion.value.trim()) {
@@ -792,20 +1816,39 @@ const handleAskQuestion = async () => {
   qaLoading.value = true
   
   try {
+    // 获取或创建会话ID
+    const sessionId = await getOrCreateSessionId()
+    
     const res = await codeRepositoryApi.codeQA({
       repository_id: repoId.value,
-      question
+      question,
+      session_id: sessionId
     })
     
-    qaHistory.value.push(res.data)
+    // 添加时间戳
+    const qaResult = {
+      ...res.data,
+      created_at: new Date().toISOString()
+    }
+    qaHistory.value.push(qaResult)
     
-    // 滚动到底部
-    nextTick(() => {
-      const el = document.querySelector('.qa-history')
+    // 保存到 localStorage（作为备份）
+    const storageKey = `qa_history_${repoId.value}_${sessionId}`
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(qaHistory.value))
+    } catch (e) {
+      console.warn('保存到 localStorage 失败:', e)
+    }
+    
+    // 滚动到底部并渲染 Mermaid
+    await nextTick()
+    setTimeout(() => {
+      renderAllMermaidDiagrams()
+      const el = qaHistoryRef.value || document.querySelector('.qa-history')
       if (el) {
         el.scrollTop = el.scrollHeight
       }
-    })
+    }, 200)
   } catch (error: any) {
     console.error('问答失败:', error)
     ElMessage.error('问答失败')
@@ -814,13 +1857,153 @@ const handleAskQuestion = async () => {
   }
 }
 
-// 格式化答案
+// 格式化答案（使用 marked 渲染 Markdown）
 const formatAnswer = (answer: string) => {
-  return answer
-    .replace(/\n/g, '<br/>')
-    .replace(/```(\w+)?\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
-    .replace(/`(.*?)`/g, '<code>$1</code>')
-    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+  if (!answer) return ''
+  
+  try {
+    // 使用 marked 渲染 Markdown
+    const html = marked.parse(answer) as string
+    return html
+  } catch (error) {
+    console.error('Markdown 渲染失败:', error)
+    // 降级处理：简单格式化
+    return answer
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\n/g, '<br/>')
+      .replace(/```(\w+)?\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
+      .replace(/`(.*?)`/g, '<code>$1</code>')
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+  }
+}
+
+// 渲染所有 Mermaid 图表
+const renderAllMermaidDiagrams = async () => {
+  if (!qaHistoryRef.value) return
+  
+  // 动态导入 Mermaid
+  let mermaidModule: any = null
+  try {
+    mermaidModule = await import('mermaid')
+  } catch (error) {
+    console.warn('Mermaid 未安装，流程图渲染功能将不可用')
+    return
+  }
+  
+  if (!mermaidModule) return
+  
+  const mermaid = mermaidModule.default
+  mermaid.initialize({ 
+    startOnLoad: false,
+    theme: 'default',
+    securityLevel: 'loose',
+    flowchart: {
+      useMaxWidth: true,
+      htmlLabels: true,
+      curve: 'basis'
+    }
+  })
+  
+  // 查找所有答案容器中的 Mermaid 代码块
+  const answerContainers = qaHistoryRef.value.querySelectorAll('.answer-content')
+  
+  for (let containerIndex = 0; containerIndex < answerContainers.length; containerIndex++) {
+    const container = answerContainers[containerIndex] as HTMLElement
+    
+    // 查找 Mermaid 代码块
+    const mermaidBlocks = container.querySelectorAll('pre code.language-mermaid, pre code.lang-mermaid')
+    
+    // 如果没有找到，尝试查找包含 Mermaid 语法的代码块
+    if (mermaidBlocks.length === 0) {
+      const allCodeBlocks = container.querySelectorAll('pre code')
+      for (const block of allCodeBlocks) {
+        const text = block.textContent || ''
+        if (text.match(/^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|gitgraph|journey|requirement)/m)) {
+          mermaidBlocks.push(block as HTMLElement)
+        }
+      }
+    }
+    
+    for (let i = 0; i < mermaidBlocks.length; i++) {
+      const codeBlock = mermaidBlocks[i] as HTMLElement
+      const mermaidCode = codeBlock.textContent || ''
+      
+      if (!mermaidCode.trim()) continue
+      
+      try {
+        // 提取 Mermaid 代码
+        let code = mermaidCode.trim()
+        code = code.replace(/^```mermaid\n?/i, '').replace(/```\s*$/g, '').trim()
+        
+        // 修复常见的 Mermaid 语法错误
+        code = fixMermaidCode(code)
+        
+        // 创建容器
+        const mermaidContainer = document.createElement('div')
+        mermaidContainer.className = 'mermaid-diagram-container'
+        mermaidContainer.style.cssText = 'margin: 16px 0; padding: 16px; background: #fff; border-radius: 4px; border: 1px solid #e4e7ed; overflow-x: auto;'
+        
+        // 渲染 Mermaid
+        const id = `mermaid-qa-${containerIndex}-${i}-${Date.now()}`
+        const { svg } = await mermaid.render(id, code)
+        
+        mermaidContainer.innerHTML = svg
+        
+        // 替换代码块
+        const preElement = codeBlock.parentElement
+        if (preElement) {
+          preElement.replaceWith(mermaidContainer)
+        }
+      } catch (error: any) {
+        console.error('Mermaid 渲染失败:', error)
+        // 保留原始代码块，但添加错误提示
+        const preElement = codeBlock.parentElement as HTMLElement
+        if (preElement) {
+          preElement.style.cssText = 'padding: 12px; background: #fef0f0; border: 1px solid #fde2e2; border-radius: 4px; color: #f56c6c;'
+          preElement.innerHTML = `<div style="font-weight: 600; margin-bottom: 8px;">⚠️ 流程图渲染失败</div><pre style="margin: 0; white-space: pre-wrap; font-size: 12px;">${codeBlock.textContent}</pre>`
+        }
+      }
+    }
+  }
+}
+
+// 修复 Mermaid 代码语法错误
+const fixMermaidCode = (code: string): string => {
+  if (!code) return code
+  
+  const lines = code.split('\n')
+  const fixedLines: string[] = []
+  
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i].trim()
+    if (!line) continue
+    
+    // 跳过注释行
+    if (line.startsWith('#') || line.startsWith('//')) {
+      continue
+    }
+    
+    // 修复不完整的箭头
+    if (line.includes('->') && !line.includes('-->')) {
+      if (line.endsWith('->') || line.endsWith('-->')) {
+        continue
+      }
+      line = line.replace(/ -> /g, ' --> ').replace(/->/g, ' --> ')
+    }
+    
+    fixedLines.push(line)
+  }
+  
+  let fixedCode = fixedLines.join('\n')
+  
+  // 确保有图表类型声明
+  if (!fixedCode.match(/^(graph|sequenceDiagram|flowchart|classDiagram|stateDiagram|erDiagram|gantt|pie|gitgraph|journey|requirement)/)) {
+    fixedCode = 'graph TD\n' + fixedCode
+  }
+  
+  return fixedCode
 }
 
 // 返回
@@ -830,11 +2013,64 @@ const goBack = () => {
 
 // 根据文件路径查找文件
 const findFileByPath = (filePath: string) => {
-  if (!codeStructure.value?.files) return null
-  const decodedPath = decodeURIComponent(filePath)
-  return codeStructure.value.files.find(
-    (f: any) => f.file_path === decodedPath || f.file_path.endsWith(decodedPath) || f.file_path.includes(decodedPath)
-  )
+  if (!codeStructure.value?.files) {
+    console.warn('代码结构文件列表为空')
+    return null
+  }
+  
+  // 标准化路径：移除开头的斜杠，统一使用正斜杠
+  const normalizePath = (path: string) => {
+    return path.replace(/^\/+/, '').replace(/\\/g, '/')
+  }
+  
+  const normalizedTarget = normalizePath(filePath)
+  console.log('查找文件 - 目标路径:', normalizedTarget)
+  
+  // 尝试多种匹配方式
+  const file = codeStructure.value.files.find((f: any) => {
+    const normalizedFile = normalizePath(f.file_path)
+    
+    // 1. 精确匹配
+    if (normalizedFile === normalizedTarget) {
+      console.log('精确匹配:', normalizedFile)
+      return true
+    }
+    
+    // 2. 文件名匹配（路径末尾）
+    if (normalizedFile.endsWith(normalizedTarget)) {
+      console.log('路径末尾匹配:', normalizedFile, '->', normalizedTarget)
+      return true
+    }
+    
+    // 3. 反向匹配（目标路径是文件路径的末尾）
+    if (normalizedTarget.endsWith(normalizedFile)) {
+      console.log('反向匹配:', normalizedTarget, '->', normalizedFile)
+      return true
+    }
+    
+    // 4. 文件名匹配（只比较文件名）
+    const targetFileName = normalizedTarget.split('/').pop()
+    const fileFileName = normalizedFile.split('/').pop()
+    if (targetFileName && fileFileName && targetFileName === fileFileName) {
+      // 如果文件名相同，进一步检查路径相似度
+      const targetDir = normalizedTarget.substring(0, normalizedTarget.lastIndexOf('/'))
+      const fileDir = normalizedFile.substring(0, normalizedFile.lastIndexOf('/'))
+      if (targetDir.endsWith(fileDir) || fileDir.endsWith(targetDir)) {
+        console.log('文件名匹配:', normalizedFile, '->', normalizedTarget)
+        return true
+      }
+    }
+    
+    return false
+  })
+  
+  if (!file) {
+    console.warn('未找到匹配文件，前10个文件路径:', 
+      codeStructure.value.files.slice(0, 10).map((f: any) => normalizePath(f.file_path))
+    )
+  }
+  
+  return file || null
 }
 
 // 处理路由查询参数（文件路径或符号）
@@ -876,6 +2112,9 @@ onMounted(async () => {
   
   // 处理路由查询参数
   await handleRouteQuery()
+  
+  // 加载问答历史记录
+  await loadQAHistory()
 })
 </script>
 
@@ -908,6 +2147,74 @@ onMounted(async () => {
       .file-content {
         padding: 15px;
         background: #ffffff;
+
+        .code-viewer {
+          .code-toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            padding: 8px;
+            background: #f5f7fa;
+            border-radius: 4px;
+            flex-wrap: wrap;
+            gap: 8px;
+
+            .toolbar-left {
+              display: flex;
+              align-items: center;
+              flex-wrap: wrap;
+              gap: 8px;
+              flex: 1;
+            }
+
+            .code-position {
+              font-size: 12px;
+              color: #409eff;
+              font-family: 'Consolas', 'Monaco', monospace;
+              font-weight: 500;
+              padding: 4px 8px;
+              background: #ecf5ff;
+              border-radius: 4px;
+            }
+          }
+
+          .code-container {
+            position: relative;
+          }
+
+          pre.code-content {
+            margin: 0;
+            cursor: text;
+            position: relative;
+            padding: 10px;
+            background: #fafafa;
+            border: 1px solid #e4e7ed;
+            border-radius: 4px;
+            user-select: text;
+            width: 100%;
+            box-sizing: border-box;
+
+            &:hover {
+              border-color: #409eff;
+            }
+
+            &:active {
+              border-color: #66b1ff;
+            }
+
+            code {
+              display: block;
+              white-space: pre;
+              word-wrap: normal;
+              font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+              font-size: 14px;
+              line-height: 1.5;
+              color: #303133;
+              pointer-events: none; // 让点击事件穿透到 pre 元素
+            }
+          }
+        }
 
         pre {
           margin: 0;
@@ -1093,91 +2400,580 @@ onMounted(async () => {
     }
   }
 
+  
+  // 对话框样式
+  :deep(.qa-dialog) {
+    .el-dialog__body {
+      padding: 0;
+    }
+  }
+
+  .dialog-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 4px;
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+
+      .header-icon {
+        font-size: 20px;
+        color: #409EFF;
+      }
+
+      .header-title {
+        font-size: 18px;
+        font-weight: 600;
+        color: #303133;
+      }
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 8px;
+    }
+  }
+
   .qa-container {
     display: flex;
     flex-direction: column;
-    height: 500px;
+    height: 70vh;
+    min-height: 600px;
+    background: #fafbfc;
 
     .qa-history {
       flex: 1;
       overflow-y: auto;
-      padding: 20px;
-      background: #f5f5f5;
-      border-radius: 8px;
-      margin-bottom: 20px;
+      padding: 24px;
+      background: linear-gradient(to bottom, #fafbfc 0%, #f5f7fa 100%);
+      
+      // 自定义滚动条
+      &::-webkit-scrollbar {
+        width: 6px;
+      }
+      
+      &::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      
+      &::-webkit-scrollbar-thumb {
+        background: #c1c1c1;
+        border-radius: 3px;
+        
+        &:hover {
+          background: #a8a8a8;
+        }
+      }
 
-      .qa-item {
-        margin-bottom: 20px;
+      // 空状态
+      .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        padding: 40px;
+        text-align: center;
 
-        .question {
-          display: flex;
-          align-items: flex-start;
-          gap: 10px;
-          margin-bottom: 10px;
-          padding: 12px;
-          background: #e3f2fd;
-          border-radius: 8px;
-          font-weight: 500;
+        .empty-icon {
+          margin-bottom: 20px;
+          color: #c0c4cc;
         }
 
-        .answer {
+        .empty-title {
+          margin: 0 0 12px 0;
+          font-size: 20px;
+          font-weight: 600;
+          color: #303133;
+        }
+
+        .empty-description {
+          margin: 0 0 24px 0;
+          font-size: 14px;
+          color: #909399;
+        }
+
+        .example-questions {
           display: flex;
-          align-items: flex-start;
-          gap: 10px;
-          padding: 12px;
+          flex-wrap: wrap;
+          gap: 12px;
+          justify-content: center;
+          max-width: 600px;
+
+          .example-tag {
+            cursor: pointer;
+            transition: all 0.3s;
+            padding: 8px 16px;
+            font-size: 13px;
+
+            &:hover {
+              transform: translateY(-2px);
+              box-shadow: 0 2px 8px rgba(64, 158, 255, 0.2);
+            }
+          }
+        }
+      }
+
+      // 消息气泡
+      .message-bubble {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 24px;
+        animation: fadeIn 0.3s ease-in;
+
+        @keyframes fadeIn {
+          from {
+            opacity: 0;
+            transform: translateY(10px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+
+        .bubble-avatar {
+          width: 40px;
+          height: 40px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          font-size: 18px;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .user-avatar {
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          color: white;
+        }
+
+        .ai-avatar {
+          background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+          color: white;
+        }
+
+        .bubble-content {
+          flex: 1;
+          min-width: 0;
+        }
+
+        .bubble-header {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 8px;
+
+          .bubble-name {
+            font-size: 13px;
+            font-weight: 600;
+            color: #606266;
+          }
+
+          .bubble-time {
+            font-size: 12px;
+            color: #c0c4cc;
+          }
+        }
+
+        .bubble-text {
+          line-height: 1.7;
+          word-wrap: break-word;
+        }
+      }
+
+      .question-bubble {
+        .bubble-content {
+          .bubble-text {
+            padding: 12px 16px;
+            background: white;
+            border-radius: 12px 12px 12px 4px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            color: #303133;
+            font-size: 14px;
+          }
+        }
+      }
+
+      .answer-bubble {
+        .bubble-content {
+          .bubble-text {
+            padding: 16px;
+            background: white;
+            border-radius: 12px 12px 4px 12px;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+            color: #303133;
+            font-size: 14px;
+          }
+        }
+      }
+
+      // 加载状态
+      .loading-bubble {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 24px;
+
+        .bubble-avatar {
+          width: 40px;
+          height: 40px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          font-size: 18px;
+          background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+          color: white;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .typing-indicator {
+          display: flex;
+          gap: 4px;
+          padding: 16px;
           background: white;
-          border-radius: 8px;
-          line-height: 1.8;
+          border-radius: 12px 12px 4px 12px;
+          box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
 
-          > div {
-            flex: 1;
-          }
+          span {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #c0c4cc;
+            animation: typing 1.4s infinite;
 
-          :deep(code) {
-            background: #f5f5f5;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-family: monospace;
-          }
+            &:nth-child(2) {
+              animation-delay: 0.2s;
+            }
 
-          :deep(pre) {
-            background: #2d2d2d;
-            color: #f8f8f2;
-            padding: 15px;
-            border-radius: 5px;
-            overflow-x: auto;
-            margin: 10px 0;
-
-            code {
-              background: transparent;
-              padding: 0;
+            &:nth-child(3) {
+              animation-delay: 0.4s;
             }
           }
 
-          .sources {
-            margin-top: 10px;
-            font-size: 12px;
-            color: #666;
+          @keyframes typing {
+            0%, 60%, 100% {
+              transform: translateY(0);
+              opacity: 0.7;
+            }
+            30% {
+              transform: translateY(-10px);
+              opacity: 1;
+            }
+          }
+        }
+      }
 
-            span {
-              margin-right: 10px;
+      // Markdown 样式
+      .answer-content {
+        :deep(h1), :deep(h2), :deep(h3), :deep(h4), :deep(h5), :deep(h6) {
+          margin-top: 16px;
+          margin-bottom: 10px;
+          font-weight: 600;
+          line-height: 1.4;
+          color: #303133;
+        }
+        
+        :deep(h1) { font-size: 20px; }
+        :deep(h2) { font-size: 18px; }
+        :deep(h3) { font-size: 16px; }
+        :deep(h4) { font-size: 14px; }
+        
+        :deep(p) {
+          margin: 10px 0;
+          line-height: 1.8;
+        }
+        
+        :deep(ul), :deep(ol) {
+          margin: 10px 0;
+          padding-left: 24px;
+        }
+        
+        :deep(li) {
+          margin: 6px 0;
+          line-height: 1.6;
+        }
+        
+        :deep(code) {
+          padding: 3px 6px;
+          background: #f1f2f3;
+          border-radius: 4px;
+          font-family: 'Consolas', 'Monaco', monospace;
+          font-size: 0.9em;
+          color: #e83e8c;
+        }
+        
+        :deep(pre) {
+          margin: 12px 0;
+          padding: 16px;
+          background: #282c34;
+          border-radius: 8px;
+          overflow-x: auto;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+          
+          code {
+            padding: 0;
+            background: transparent;
+            color: #abb2bf;
+          }
+        }
+        
+        :deep(blockquote) {
+          margin: 12px 0;
+          padding: 12px 16px;
+          border-left: 4px solid #409EFF;
+          background: #ecf5ff;
+          border-radius: 4px;
+          color: #606266;
+        }
+        
+        :deep(table) {
+          width: 100%;
+          border-collapse: collapse;
+          margin: 12px 0;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+          border-radius: 4px;
+          overflow: hidden;
+          
+          th, td {
+            padding: 10px 12px;
+            border: 1px solid #e4e7ed;
+          }
+          
+          th {
+            background: #f5f7fa;
+            font-weight: 600;
+            color: #303133;
+          }
+          
+          tr:hover {
+            background: #fafafa;
+          }
+        }
+        
+        :deep(a) {
+          color: #409EFF;
+          text-decoration: none;
+          transition: all 0.2s;
+          
+          &:hover {
+            color: #66b1ff;
+            text-decoration: underline;
+          }
+        }
+        
+        // Mermaid 图表样式
+        :deep(.mermaid-diagram-container) {
+          margin: 20px 0;
+          padding: 20px;
+          background: #fff;
+          border-radius: 8px;
+          border: 1px solid #e4e7ed;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+          overflow-x: auto;
+          text-align: center;
+          
+          svg {
+            max-width: 100%;
+            height: auto;
+          }
+        }
+      }
+
+      .sources {
+        margin-top: 16px;
+
+        .sources-list {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+
+          .source-tag {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+
+            &:hover {
+              transform: translateY(-1px);
+              box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
             }
           }
         }
       }
     }
 
-    .qa-input {
-      :deep(.el-input-group__append) {
-        background: var(--el-color-primary);
-        color: white;
-        border: none;
+    .qa-input-area {
+      padding: 16px 24px;
+      background: white;
+      border-top: 1px solid #e4e7ed;
+      box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.04);
 
-        .el-button {
-          color: white;
+      .input-wrapper {
+        max-width: 1200px;
+        margin: 0 auto;
+
+        .question-input {
+          margin-bottom: 12px;
+
+          :deep(.el-textarea__inner) {
+            border-radius: 8px;
+            border: 1px solid #dcdfe6;
+            transition: all 0.3s;
+            font-size: 14px;
+            line-height: 1.6;
+
+            &:focus {
+              border-color: #409EFF;
+              box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.1);
+            }
+          }
+        }
+
+        .input-actions {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+
+          .input-tips {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            color: #909399;
+          }
+
+          .send-button {
+            min-width: 100px;
+            border-radius: 8px;
+            font-weight: 500;
+            box-shadow: 0 2px 8px rgba(64, 158, 255, 0.3);
+            transition: all 0.3s;
+
+            &:hover:not(:disabled) {
+              transform: translateY(-1px);
+              box-shadow: 0 4px 12px rgba(64, 158, 255, 0.4);
+            }
+
+            &:active:not(:disabled) {
+              transform: translateY(0);
+            }
+          }
         }
       }
     }
   }
+}
+
+// 代码解释对话框样式
+.explanation-content {
+  .explanation-header {
+    display: flex;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+  
+  .code-section {
+    margin-bottom: 20px;
+    
+    h4 {
+      margin-bottom: 12px;
+      color: #303133;
+      font-size: 16px;
+      font-weight: 600;
+    }
+    
+    .code-block {
+      background: #f5f7fa;
+      border: 1px solid #e4e7ed;
+      border-radius: 4px;
+      padding: 16px;
+      overflow-x: auto;
+      font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      margin: 0;
+      
+      code {
+        color: #303133;
+      }
+    }
+  }
+  
+  .explanation-section {
+    h4 {
+      margin-bottom: 12px;
+      color: #303133;
+      font-size: 16px;
+      font-weight: 600;
+    }
+    
+    .explanation-text {
+      line-height: 1.8;
+      color: #606266;
+      
+      p {
+        margin: 12px 0;
+      }
+      
+      h2 {
+        font-size: 20px;
+        margin: 20px 0 12px;
+        color: #303133;
+      }
+      
+      h3 {
+        font-size: 18px;
+        margin: 16px 0 10px;
+        color: #303133;
+      }
+      
+      h4 {
+        font-size: 16px;
+        margin: 14px 0 8px;
+        color: #303133;
+      }
+      
+      code {
+        background: #f5f7fa;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+        font-size: 13px;
+      }
+      
+      pre {
+        background: #f5f7fa;
+        padding: 12px;
+        border-radius: 4px;
+        overflow-x: auto;
+        margin: 12px 0;
+        
+        code {
+          background: transparent;
+          padding: 0;
+        }
+      }
+    }
+  }
+}
+
+.context-preview {
+  margin: 0;
+  padding: 4px 8px;
+  background: #f5f7fa;
+  border-radius: 3px;
+  font-size: 12px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  white-space: pre-wrap;
+  max-height: 60px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 </style>

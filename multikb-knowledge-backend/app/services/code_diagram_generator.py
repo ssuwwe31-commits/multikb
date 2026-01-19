@@ -34,14 +34,34 @@ class CodeDiagramGenerator:
                 backend_langs = 'Python/Java/Go'
             diagram += f'    Backend["应用层<br/>{backend_langs}"]\n'
         
-        # 数据层（从架构信息推断，只使用实际检测到的存储系统）
+        # 数据层（从架构信息推断，使用所有检测到的存储系统）
         storage_systems = []
         if arch_details.get('storage_systems') and len(arch_details['storage_systems']) > 0:
-            storage_systems = [s.get('name', '') for s in arch_details['storage_systems'][:3] if s.get('name')]
+            # 获取所有存储系统名称，去重并过滤空值
+            all_storage_names = []
+            seen = set()
+            for s in arch_details['storage_systems']:
+                name = s.get('name', '').strip()
+                if name and name not in seen:
+                    all_storage_names.append(name)
+                    seen.add(name)
+            storage_systems = all_storage_names
         
         # 如果没有检测到存储系统，不显示数据层（避免误报）
         if storage_systems:
-            storage_str = ' + '.join(storage_systems)
+            # 如果存储系统太多，分行显示（每行最多3个）
+            if len(storage_systems) > 3:
+                # 分行显示：第一行3个，其余在第二行
+                first_line = ' + '.join(storage_systems[:3])
+                remaining = storage_systems[3:]
+                if len(remaining) <= 3:
+                    second_line = ' + '.join(remaining)
+                    storage_str = f'{first_line}<br/>{second_line}'
+                else:
+                    # 如果还有更多，显示前3个 + "等N个"
+                    storage_str = f'{first_line}<br/>等{len(remaining)}个'
+            else:
+                storage_str = ' + '.join(storage_systems)
             diagram += f'    Data["数据层<br/>{storage_str}"]\n'
         
         # 连接关系

@@ -6,9 +6,11 @@ Wiki 内容生成模块
 import os
 import re
 import json
+import hashlib
 from typing import Dict, List, Optional
 from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
 
 from app.core.logging import logger
 from app.services.code_architecture_analyzer import CodeArchitectureAnalyzer
@@ -24,14 +26,19 @@ class CodeWikiGenerator:
         'coverage', '.pytest_cache', '.mypy_cache'
     ]
     
-    def __init__(self, architecture_analyzer: Optional[CodeArchitectureAnalyzer] = None):
+    def __init__(self, architecture_analyzer: Optional[CodeArchitectureAnalyzer] = None, db=None, repository_id: Optional[int] = None):
         """
         初始化 Wiki 生成器
         
         Args:
             architecture_analyzer: 架构分析器（可选，如果提供则使用，否则创建新实例）
+            db: 数据库会话（用于 LLM 缓存）
+            repository_id: 仓库ID（用于 LLM 缓存关联）
         """
-        self.architecture_analyzer = architecture_analyzer or CodeArchitectureAnalyzer()
+        self.architecture_analyzer = architecture_analyzer or CodeArchitectureAnalyzer(db=db, repository_id=repository_id)
+        self.db = db
+        self.repository_id = repository_id
+        self._llm_service = None  # 延迟初始化
     
     def generate_wiki_content(self, repo_path: str, repo_name: str, analyzed_files: List[Dict], statistics: Dict, dependencies: Dict) -> Dict:
         """
@@ -127,17 +134,17 @@ class CodeWikiGenerator:
         parallel_time = (datetime.now() - start_time).total_seconds()
         logger.info(f"✅ 并行生成完成，耗时: {parallel_time:.2f} 秒")
         
-        # 7. 补充核心组件的统计数据（根据名称匹配实际文件）
+        # 7. 补充核心组件的统计数据（根据名称匹配实际文件，使用 LLM 增强）
         if wiki_content.get('core_components'):
             wiki_content['core_components'] = self._enrich_core_components_statistics(
-                wiki_content['core_components'], analyzed_files, module_structure
+                wiki_content['core_components'], analyzed_files, module_structure, repo_path
             )
         
-        # 8. 补充功能子系统的前后端路径（根据 service_files 和架构详情匹配）
+        # 8. 补充功能子系统的前后端路径（根据 service_files 和架构详情匹配，使用 LLM 增强）
         if wiki_content.get('system_architecture', {}).get('functional_subsystems_table'):
             # 使用之前提取的架构详情（包含 API 路由和前端视图信息）
             wiki_content['system_architecture']['functional_subsystems_table'] = self._enrich_subsystems_paths(
-                wiki_content['system_architecture']['functional_subsystems_table'], analyzed_files, statistics, arch_details
+                wiki_content['system_architecture']['functional_subsystems_table'], analyzed_files, statistics, arch_details, repo_path
             )
         
         # 9. 添加关键文件列表
@@ -280,6 +287,8 @@ class CodeWikiGenerator:
 }}
 """
         
+        logger.info(f"[LLM调用] Wiki 基础内容生成使用模型 {settings.CODE_LLM_MODEL}, prompt 长度: {len(prompt)} 字符")
+        
         response = requests.post(
             f"{settings.OLLAMA_BASE_URL}/api/generate",
             json={
@@ -292,6 +301,8 @@ class CodeWikiGenerator:
         response.raise_for_status()
         result = response.json()
         content = result.get("response", "").strip()
+        
+        logger.info(f"[LLM调用] Wiki 基础内容生成成功，响应长度: {len(content)} 字符")
         
         if not content:
             raise Exception("LLM 返回空内容")
@@ -308,7 +319,7 @@ class CodeWikiGenerator:
         try:
             wiki_data = json.loads(content)
         except json.JSONDecodeError as e:
-            logger.error(f"LLM 返回的 JSON 解析失败: {e}")
+            logger.error(f"[LLM调用] Wiki 基础内容 JSON 解析失败: {e}, 响应前500字符: {content[:500]}")
             raise Exception(f"LLM 返回的 JSON 格式错误: {str(e)}")
         
         required_fields = ['project_overview', 'what_is_project', 'core_components', 'value_propositions', 'key_features']
@@ -342,11 +353,29 @@ class CodeWikiGenerator:
         
         for file_data in analyzed_files:
             path = file_data['file_path']
-            parts = path.split('/')
-            if len(parts) > 1:
-                module_name = parts[0] if len(parts) == 2 else f"{parts[0]}/{parts[1]}"
-            else:
-                module_name = 'root'
+            parts = [p for p in path.split('/') if p]  # 过滤空字符串
+            
+            # 智能识别模块名（支持多级目录）
+            module_name = 'root'
+            if len(parts) >= 2:
+                # 优先使用前两级目录
+                module_name = f"{parts[0]}/{parts[1]}"
+            elif len(parts) == 1:
+                # 单级目录，检查是否是常见的前缀目录
+                first_part = parts[0].lower()
+                if first_part in ['src', 'lib', 'app', 'apps', 'tools', 'utils', 'core', 'common']:
+                    module_name = parts[0]
+                else:
+                    module_name = 'root'
+            
+            # 如果模块名是 root，尝试从路径中提取有意义的模块名
+            if module_name == 'root' and len(parts) > 0:
+                # 检查路径中是否有常见的模块标识
+                for part in parts:
+                    part_lower = part.lower()
+                    if part_lower not in ['src', 'lib', 'app', 'apps', 'tools', 'utils', 'core', 'common', 'test', 'tests']:
+                        module_name = part
+                        break
             
             module_map[module_name]['files'].append(path)
             module_map[module_name]['lines'] += file_data.get('lines', 0)
@@ -704,7 +733,14 @@ class CodeWikiGenerator:
         
         return (None, 1)
     
-    def _enrich_core_components_statistics(self, core_components: List[Dict], analyzed_files: List[Dict], module_structure: Dict) -> List[Dict]:
+    def _get_llm_service(self):
+        """获取 LLM 增强服务（延迟初始化）"""
+        if self._llm_service is None:
+            from app.services.llm_enhancement_service import LLMEnhancementService
+            self._llm_service = LLMEnhancementService(db=self.db, repository_id=self.repository_id)
+        return self._llm_service
+    
+    def _enrich_core_components_statistics(self, core_components: List[Dict], analyzed_files: List[Dict], module_structure: Dict, repo_path: str) -> List[Dict]:
         """
         补充核心组件的统计数据（文件数、代码行数、符号数）
         
@@ -716,6 +752,29 @@ class CodeWikiGenerator:
         Returns:
             补充了统计数据后的核心组件列表
         """
+        # 中英文关键词映射（用于匹配中文组件名到英文目录名）
+        CHINESE_ENGLISH_MAPPING = {
+            '可视化': ['visualize', 'visualization', 'trace', 'track', 'view', 'ui', 'display'],
+            '追踪': ['trace', 'track', 'tracking', 'monitor', 'log'],
+            '评估': ['evaluate', 'evaluation', 'benchmark', 'test', 'metric'],
+            '基准测试': ['benchmark', 'test', 'testing', 'evaluation', 'metric'],
+            '输入处理': ['input', 'process', 'handler', 'parse', 'preprocess'],
+            '答案生成': ['answer', 'generate', 'output', 'response', 'result'],
+            '配置管理': ['config', 'configuration', 'setting', 'settings', 'conf'],
+            '工具库': ['tool', 'tools', 'util', 'utils', 'helper', 'helpers'],
+            '日志处理': ['log', 'logging', 'logger', 'trace'],
+            '单元测试': ['test', 'testing', 'unit', 'spec'],
+            '智能体': ['agent', 'agents', 'bot', 'bots'],
+            '推理': ['reason', 'reasoning', 'infer', 'inference', 'think'],
+            '任务执行': ['task', 'tasks', 'execute', 'execution', 'run'],
+            '数据收集': ['collect', 'collection', 'gather', 'data'],
+            '流式处理': ['stream', 'streaming', 'flow', 'pipeline'],
+            '前端': ['frontend', 'front', 'ui', 'view', 'web'],
+            '后端': ['backend', 'back', 'server', 'api', 'service'],
+            '服务': ['service', 'services', 'server', 'api'],
+            '模块': ['module', 'modules', 'component', 'components'],
+            '系统': ['system', 'systems', 'platform']
+        }
         # 从模块结构中获取目录统计（更准确）
         modules_map = {}
         if module_structure and 'modules' in module_structure:
@@ -774,11 +833,21 @@ class CodeWikiGenerator:
             comp_keywords = []
             # 从名称中提取关键词
             comp_keywords.extend(comp_name.replace(' ', '-').replace('_', '-').split('-'))
+            
+            # 处理中文组件名：转换为英文关键词
+            comp_name_original = comp.get('name', '')
+            for chinese_key, english_keywords in CHINESE_ENGLISH_MAPPING.items():
+                if chinese_key in comp_name_original:
+                    comp_keywords.extend(english_keywords)
+            
             # 从职责中提取关键词（常见的技术词汇）
-            tech_keywords = ['agent', 'ui', 'client', 'server', 'service', 'api', 'chat', 'search', 'component', 'view', 'page']
+            tech_keywords = ['agent', 'ui', 'client', 'server', 'service', 'api', 'chat', 'search', 'component', 'view', 'page', 'trace', 'track', 'visualize', 'evaluate', 'test', 'config', 'tool', 'log']
             for keyword in tech_keywords:
                 if keyword in comp_purpose:
                     comp_keywords.append(keyword)
+            
+            # 去重并过滤太短的词
+            comp_keywords = list(set([k for k in comp_keywords if len(k) > 2]))
             
             matched_stats = {'files': 0, 'lines': 0, 'symbols': 0, 'languages': []}
             best_match_score = 0
@@ -821,21 +890,51 @@ class CodeWikiGenerator:
                         matched_stats['languages'] = stats['languages'] if isinstance(stats['languages'], list) else list(stats['languages'])
                         best_match_score = score
             
-            # 方法3：如果还是没匹配到，尝试从文件路径中直接匹配
+            # 方法3：如果还是没匹配到，尝试从文件路径中直接匹配（支持深层路径）
             if matched_stats['files'] == 0:
+                # 提取组件名称中的关键词（支持多种分隔符）
+                comp_name_lower = comp.get('name', '').lower()
+                comp_name_parts = re.split(r'[/\\_\-\.]', comp_name_lower)
+                comp_keywords_extended = comp_keywords + [p for p in comp_name_parts if len(p) > 2]
+                
+                # 也提取职责描述中的关键词
+                purpose_lower = comp.get('purpose', '').lower()
+                purpose_keywords = [w for w in re.split(r'[^\w]', purpose_lower) if len(w) > 3]
+                comp_keywords_extended.extend(purpose_keywords[:5])  # 最多添加5个关键词
+                
                 for file_data in analyzed_files:
                     path = file_data.get('file_path', '').lower()
-                    # 检查路径中是否包含组件关键词
-                    for keyword in comp_keywords:
-                        if keyword and len(keyword) > 2 and keyword in path:
-                            matched_stats['files'] += 1
-                            matched_stats['lines'] += file_data.get('lines', 0)
-                            if file_data.get('symbols'):
-                                matched_stats['symbols'] += len(file_data['symbols'])
-                            if file_data.get('language'):
-                                if file_data['language'] not in matched_stats['languages']:
-                                    matched_stats['languages'].append(file_data['language'])
-                            break  # 每个文件只匹配一次
+                    file_name = os.path.basename(path).lower()
+                    
+                    # 检查路径中是否包含组件关键词（支持部分匹配）
+                    matched = False
+                    for keyword in comp_keywords_extended:
+                        if keyword and len(keyword) > 2:
+                            # 检查完整路径
+                            if keyword in path:
+                                matched = True
+                                break
+                            # 检查文件名（不含扩展名）
+                            if keyword in file_name.split('.')[0]:
+                                matched = True
+                                break
+                            # 检查路径的各个部分（支持深层路径）
+                            path_parts = path.split('/')
+                            for part in path_parts:
+                                if keyword in part:
+                                    matched = True
+                                    break
+                            if matched:
+                                break
+                    
+                    if matched:
+                        matched_stats['files'] += 1
+                        matched_stats['lines'] += file_data.get('lines', 0)
+                        if file_data.get('symbols'):
+                            matched_stats['symbols'] += len(file_data['symbols'])
+                        if file_data.get('language'):
+                            if file_data['language'] not in matched_stats['languages']:
+                                matched_stats['languages'].append(file_data['language'])
             
             # 构建增强后的组件对象
             enriched_comp = {
@@ -850,28 +949,260 @@ class CodeWikiGenerator:
         
         matched_count = sum(1 for c in enriched_components if c['files_count'] > 0)
         logger.info(f"核心组件统计数据补充完成: 组件数={len(enriched_components)}, 有数据的组件数={matched_count}")
+        
+        # 如果未匹配的组件较多，使用 LLM 增强匹配
+        unmatched_components = [c for c in enriched_components if c['files_count'] == 0]
+        if unmatched_components and len(unmatched_components) > 0:
+            logger.info(f"[组件匹配] 发现 {len(unmatched_components)} 个未匹配组件，使用 LLM 增强匹配")
+            try:
+                enriched_components = self.match_components_with_llm(
+                    enriched_components, unmatched_components, analyzed_files, module_structure, repo_path
+                )
+                # 重新统计匹配数量
+                matched_count_after_llm = sum(1 for c in enriched_components if c['files_count'] > 0)
+                logger.info(f"[组件匹配] LLM 增强后: 已匹配={matched_count_after_llm}/{len(enriched_components)} (提升 {matched_count_after_llm - matched_count} 个)")
+            except Exception as e:
+                logger.warning(f"[组件匹配] LLM 增强匹配失败: {e}，使用原有匹配结果")
+        
         if matched_count < len(enriched_components):
             # 记录未匹配的组件详细信息
             unmatched_components = [c for c in enriched_components if c['files_count'] == 0]
-            logger.warning(f"核心组件匹配情况: 已匹配={matched_count}/{len(enriched_components)}, 未匹配={len(unmatched_components)}")
-            for comp in unmatched_components:
-                logger.warning(f"  - 未匹配组件: 名称='{comp['name']}', 职责='{comp['purpose'][:100]}...'")
-                # 列出可能的匹配目录（前5个）
-                possible_matches = []
-                comp_keywords = comp['name'].lower().replace(' ', '-').replace('_', '-').split('-')
-                for module_name, stats in list(modules_map.items())[:10]:
-                    module_lower = module_name.lower()
-                    for keyword in comp_keywords:
-                        if keyword and len(keyword) > 2 and keyword in module_lower:
-                            possible_matches.append(f"{module_name}(文件数={stats['files']})")
-                            break
-                if possible_matches:
-                    logger.info(f"    可能的匹配目录: {', '.join(possible_matches[:5])}")
-                else:
-                    logger.info(f"    未找到可能的匹配目录，可用目录: {', '.join(list(modules_map.keys())[:5])}")
+            if unmatched_components:
+                logger.warning(f"核心组件匹配情况: 已匹配={matched_count}/{len(enriched_components)}, 未匹配={len(unmatched_components)}")
+                for comp in unmatched_components[:3]:  # 只记录前3个
+                    logger.warning(f"  - 未匹配组件: 名称='{comp['name']}', 职责='{comp['purpose'][:100]}...'")
+        
         return enriched_components
     
-    def _enrich_subsystems_paths(self, subsystems: List[Dict], analyzed_files: List[Dict], statistics: Dict, arch_details: Dict) -> List[Dict]:
+    def _extract_module_code_samples(self, module_files: List[str], repo_path: str, max_lines: int = 1500) -> str:
+        """
+        提取模块的代码样本（充分利用长上下文）
+        
+        Args:
+            module_files: 模块文件列表
+            repo_path: 仓库路径
+            max_lines: 最大行数（默认 1500，考虑批量处理时的 token 分配）
+        """
+        samples = []
+        total_lines = 0
+        
+        # 充分利用长上下文，可以分析更多文件
+        # 256K tokens ≈ 可以分析 10-12 个文件的完整内容（考虑批量处理）
+        max_files = 10  # 最多分析 10 个文件
+        
+        for file_path in module_files[:max_files]:
+            if total_lines >= max_lines:
+                break
+            
+            full_path = os.path.join(repo_path, file_path)
+            if os.path.exists(full_path):
+                try:
+                    with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        lines = f.readlines()
+                        file_line_count = len(lines)
+                        
+                        # 如果文件不大，直接包含完整文件
+                        if file_line_count <= 1000:
+                            f.seek(0)
+                            file_content = f.read()
+                            samples.append(f"# {file_path} (完整文件，{file_line_count} 行)\n{file_content}")
+                            total_lines += file_line_count
+                        else:
+                            # 大文件：包含开头和结尾（通常包含关键信息）
+                            remaining = max_lines - total_lines
+                            if remaining > 500:
+                                # 保留前 60% 和后 40%
+                                head_lines = int(remaining * 0.6)
+                                tail_lines = remaining - head_lines
+                                file_sample = ''.join(
+                                    lines[:head_lines] + 
+                                    [f'\n# ... (省略 {file_line_count - head_lines - tail_lines} 行) ...\n'] + 
+                                    lines[-tail_lines:]
+                                )
+                                samples.append(f"# {file_path} (采样，共 {file_line_count} 行)\n{file_sample}")
+                                total_lines += head_lines + tail_lines
+                            else:
+                                # 剩余空间很小，只保留开头
+                                file_sample = ''.join(lines[:remaining])
+                                samples.append(f"# {file_path} (前 {remaining} 行，共 {file_line_count} 行)\n{file_sample}")
+                                total_lines += remaining
+                except Exception as e:
+                    logger.debug(f"[模块采样] 读取文件失败: {file_path}, {e}")
+                    pass
+        
+        return '\n\n'.join(samples)
+    
+    def match_components_with_llm(self, enriched_components: List[Dict], unmatched_components: List[Dict], analyzed_files: List[Dict], module_structure: Dict, repo_path: str) -> List[Dict]:
+        """
+        使用 LLM 增强核心组件匹配（批量处理优化）
+        
+        Args:
+            enriched_components: 已补充统计的组件列表
+            unmatched_components: 未匹配的组件列表
+            analyzed_files: 已分析的文件列表
+            module_structure: 模块结构信息
+            repo_path: 仓库路径
+            
+        Returns:
+            匹配后的组件列表
+        """
+        if not unmatched_components:
+            return enriched_components
+        
+        # 批量处理：一次处理多个组件（充分利用长上下文）
+        # qwen3-coder 256K tokens ≈ 可以同时处理 8-12 个组件的匹配（考虑每个组件的代码量）
+        batch_size = 10  # 每次处理 10 个组件（平衡 token 使用和效率）
+        
+        # 从模块结构中获取模块文件映射
+        modules_map = {}
+        if module_structure and 'modules' in module_structure:
+            for module in module_structure['modules']:
+                module_name = module.get('name', '')
+                modules_map[module_name] = module.get('files', [])
+        else:
+            # 如果没有模块结构，按目录分组
+            from collections import defaultdict
+            dir_files = defaultdict(list)
+            for file_data in analyzed_files:
+                path = file_data.get('file_path', '')
+                parts = path.split('/')
+                if len(parts) >= 2:
+                    dir_key = f"{parts[0]}/{parts[1]}"
+                elif len(parts) == 1:
+                    dir_key = parts[0]
+                else:
+                    dir_key = 'root'
+                dir_files[dir_key].append(path)
+            modules_map = dict(dir_files)
+        
+        for i in range(0, len(unmatched_components), batch_size):
+            batch_components = unmatched_components[i:i+batch_size]
+            
+            # 为每个组件准备候选模块
+            component_candidates = []
+            for comp in batch_components:
+                comp_name = comp.get('name', '')
+                comp_purpose = comp.get('purpose', '')
+                
+                # 提取候选模块（基于关键词预筛选）
+                candidate_modules = {}
+                comp_keywords = comp_name.lower().replace(' ', '-').replace('_', '-').split('-')
+                comp_keywords.extend(comp_purpose.lower().split()[:5])
+                
+                # 从所有模块中筛选候选（最多 12 个）
+                for module_name, module_files in list(modules_map.items())[:20]:
+                    module_lower = module_name.lower()
+                    # 简单的关键词匹配筛选
+                    if any(kw in module_lower for kw in comp_keywords if len(kw) > 2):
+                        candidate_modules[module_name] = module_files[:5]  # 每个模块最多 5 个文件
+                    if len(candidate_modules) >= 12:
+                        break
+                
+                # 如果候选模块太少，添加一些文件数较多的模块
+                if len(candidate_modules) < 5:
+                    for module_name, module_files in sorted(modules_map.items(), key=lambda x: len(x[1]), reverse=True)[:10]:
+                        if module_name not in candidate_modules:
+                            candidate_modules[module_name] = module_files[:5]
+                        if len(candidate_modules) >= 12:
+                            break
+                
+                # 为每个候选模块提取代码片段
+                module_samples = []
+                for module_name, module_files in list(candidate_modules.items())[:12]:  # 最多 12 个候选
+                    if not module_files:
+                        continue
+                    # 提取模块的关键文件内容
+                    samples = self._extract_module_code_samples(module_files, repo_path, max_lines=1500)
+                    module_samples.append({
+                        'name': module_name,
+                        'file_count': len(module_files),
+                        'samples': samples
+                    })
+                
+                component_candidates.append({
+                    'name': comp_name,
+                    'purpose': comp_purpose,
+                    'candidate_modules': module_samples
+                })
+            
+            # 批量使用 LLM 匹配
+            prompt = f"""分析以下组件和候选模块，为每个组件找到最匹配的模块。
+
+组件列表:
+{json.dumps(component_candidates, ensure_ascii=False, indent=2)}
+
+请为每个组件判断：
+1. 哪个模块最匹配该组件（基于职责和代码内容）
+2. 匹配度评分（0-100）
+3. 匹配理由
+
+返回 JSON 格式：
+{{
+  "matches": [
+    {{
+      "component_name": "可视化追踪系统",
+      "matched_module": "apps/visualize-trace",
+      "confidence": 0.85,
+      "reason": "该模块包含可视化相关的代码，与组件职责匹配"
+    }}
+  ]
+}}
+
+注意：
+- 如果某个组件没有匹配的模块，matched_module 设为 null
+- confidence 低于 0.6 的匹配可以忽略
+"""
+            
+            # 调用 LLM（使用缓存）
+            try:
+                llm_service = self._get_llm_service()
+                cache_key = f"component_match:{hashlib.md5(str(component_candidates).encode()).hexdigest()[:16]}"
+                llm_result = llm_service.call_llm_with_cache(prompt, cache_key=cache_key)
+                parsed_result = llm_service.parse_json_response(llm_result)
+                matches = parsed_result.get('matches', [])
+                
+                # 应用匹配结果
+                for match in matches:
+                    comp_name = match.get('component_name')
+                    matched_module = match.get('matched_module')
+                    confidence = match.get('confidence', 0)
+                    
+                    if matched_module and confidence >= 0.6:
+                        # 找到对应的组件并更新统计数据
+                        for comp in enriched_components:
+                            if comp.get('name') == comp_name and comp.get('files_count', 0) == 0:
+                                # 从模块结构中获取统计数据
+                                if matched_module in modules_map:
+                                    module_files = modules_map[matched_module]
+                                    comp['files_count'] = len(module_files)
+                                    # 计算行数和符号数
+                                    total_lines = 0
+                                    total_symbols = 0
+                                    languages = set()
+                                    for file_path in module_files:
+                                        for file_data in analyzed_files:
+                                            if file_data.get('file_path') == file_path:
+                                                total_lines += file_data.get('lines', 0)
+                                                if file_data.get('symbols'):
+                                                    total_symbols += len(file_data['symbols'])
+                                                if file_data.get('language'):
+                                                    languages.add(file_data['language'])
+                                    comp['lines_count'] = total_lines
+                                    comp['symbols_count'] = total_symbols
+                                    comp['languages'] = list(languages)
+                                    comp['matched_module'] = matched_module
+                                    comp['match_confidence'] = confidence
+                                    comp['match_reason'] = match.get('reason', '')
+                                    break
+                
+                logger.info(f"[组件匹配] LLM 匹配了 {len(matches)} 个组件")
+            except Exception as e:
+                logger.warning(f"[组件匹配] LLM 匹配失败: {e}")
+                # 降级：使用关键词匹配的结果
+        
+        return enriched_components
+    
+    def _enrich_subsystems_paths(self, subsystems: List[Dict], analyzed_files: List[Dict], statistics: Dict, arch_details: Dict, repo_path: str) -> List[Dict]:
         """
         补充功能子系统的前后端路径
         
@@ -1054,6 +1385,33 @@ class CodeWikiGenerator:
                     if matched_frontend_path and matched_backend_route:
                         break
             
+            # 如果找到了 service_files 但没有匹配到路由，默认标记为后端服务
+            if not matched_backend_route and service_files:
+                # 检查 service_files 是否包含后端文件（Python 文件且不在前端目录）
+                backend_files = [f for f in service_files if f.endswith('.py') and 
+                               not any(kw in f.lower() for kw in ['component', 'page', 'view', 'ui', '.tsx', '.vue', '.jsx'])]
+                if backend_files:
+                    matched_backend_route = f"后端服务: {len(backend_files)} 个文件"
+            
+            # 如果仍然没有匹配，基于关键词判断
+            if not matched_frontend_path and not matched_backend_route:
+                purpose_lower = subsystem.get('key_responsibilities', '').lower()
+                name_lower = subsystem.get('subsystem_name', '').lower()
+                
+                # 检查是否有明显的后端关键词
+                backend_keywords = ['服务', 'api', '处理', '逻辑', '数据', '存储', '计算', '分析', '执行', '任务', '追踪', '测试', '评估']
+                frontend_keywords = ['界面', 'ui', '页面', '展示', '显示', '交互', '用户界面', '前端', '可视化界面']
+                
+                has_backend_keyword = any(kw in purpose_lower or kw in name_lower for kw in backend_keywords)
+                has_frontend_keyword = any(kw in purpose_lower or kw in name_lower for kw in frontend_keywords)
+                
+                if has_backend_keyword and not has_frontend_keyword:
+                    # 明显是后端，但没有找到路由，标记为后端服务
+                    matched_backend_route = '后端服务（无 API 路由）'
+                elif has_frontend_keyword and not has_backend_keyword:
+                    # 明显是前端，但没有找到路径
+                    matched_frontend_path = '前端界面（路径未识别）'
+            
             # 构建增强后的子系统对象
             enriched_subsystem = {
                 'subsystem_name': subsystem.get('subsystem_name', ''),
@@ -1075,34 +1433,177 @@ class CodeWikiGenerator:
             if subsystem['frontend_path'] == '无' and subsystem['backend_route'] == '无':
                 unmatched_subsystems.append(subsystem)
         
-        if unmatched_subsystems:
-            logger.warning(f"功能子系统路径匹配情况: 已匹配前端={frontend_matched}, 已匹配后端={backend_matched}, 完全未匹配={len(unmatched_subsystems)}")
-            for sub in unmatched_subsystems:
+        # 如果未匹配的子系统较多，使用 LLM 增强匹配
+        if unmatched_subsystems and len(unmatched_subsystems) > 0:
+            logger.info(f"[子系统匹配] 发现 {len(unmatched_subsystems)} 个未匹配子系统，使用 LLM 增强匹配")
+            try:
+                enriched_subsystems = self.match_subsystem_paths_with_llm(
+                    enriched_subsystems, unmatched_subsystems, analyzed_files, arch_details, repo_path
+                )
+                # 重新统计匹配数量
+                frontend_matched_after_llm = sum(1 for s in enriched_subsystems if s['frontend_path'] != '无')
+                backend_matched_after_llm = sum(1 for s in enriched_subsystems if s['backend_route'] != '无')
+                logger.info(f"[子系统匹配] LLM 增强后: 前端={frontend_matched_after_llm} (提升 {frontend_matched_after_llm - frontend_matched}), "
+                          f"后端={backend_matched_after_llm} (提升 {backend_matched_after_llm - backend_matched})")
+            except Exception as e:
+                logger.warning(f"[子系统匹配] LLM 增强匹配失败: {e}，使用原有匹配结果")
+        
+        # 重新统计未匹配的子系统（LLM 增强后可能已匹配）
+        final_unmatched = [s for s in enriched_subsystems if s['frontend_path'] == '无' and s['backend_route'] == '无']
+        if final_unmatched:
+            logger.warning(f"功能子系统路径匹配情况: 已匹配前端={frontend_matched}, 已匹配后端={backend_matched}, 完全未匹配={len(final_unmatched)}")
+            for sub in final_unmatched[:3]:  # 只记录前3个
                 logger.warning(f"  - 未匹配子系统: 名称='{sub['subsystem_name']}', 职责='{sub['key_responsibilities'][:100]}...'")
                 logger.info(f"    service_files: {sub['service_files'][:3] if sub['service_files'] else '[]'}")
+        
+        return enriched_subsystems
+    
+    def match_subsystem_paths_with_llm(self, enriched_subsystems: List[Dict], unmatched_subsystems: List[Dict], analyzed_files: List[Dict], arch_details: Dict, repo_path: str) -> List[Dict]:
+        """
+        使用 LLM 增强功能子系统路径匹配
+        
+        策略:
+        1. 提取子系统的职责描述
+        2. 提取相关的 service_files
+        3. 使用 LLM 判断是前端还是后端，并匹配路径
+        """
+        if not unmatched_subsystems:
+            return enriched_subsystems
+        
+        # 从架构详情中提取前端路径和后端路由
+        frontend_paths_map = {}
+        backend_routes_map = {}
+        
+        for view in arch_details.get('frontend_views', []):
+            path = view.get('path', '')
+            parts = path.split('/')
+            if len(parts) >= 2:
+                frontend_path = '/'.join(parts[:2])
+                if frontend_path not in frontend_paths_map:
+                    frontend_paths_map[frontend_path] = []
+                frontend_paths_map[frontend_path].append(path)
+        
+        for comp in arch_details.get('frontend_components', []):
+            path = comp.get('path', '')
+            parts = path.split('/')
+            if len(parts) >= 2:
+                frontend_path = '/'.join(parts[:2])
+                if frontend_path not in frontend_paths_map:
+                    frontend_paths_map[frontend_path] = []
+                frontend_paths_map[frontend_path].append(path)
+        
+        for route in arch_details.get('api_routes', []):
+            path = route.get('path', '')
+            if '/api/' in path:
+                api_part = path.split('/api/')[-1]
+                if api_part:
+                    route_path = f"/api/{api_part.split('/')[0]}"
+                    if route_path not in backend_routes_map:
+                        backend_routes_map[route_path] = []
+                    backend_routes_map[route_path].append(path)
+        
+        # 批量处理子系统（充分利用长上下文）
+        for subsystem in unmatched_subsystems:
+            subsystem_name = subsystem.get('subsystem_name', '')
+            subsystem_resp = subsystem.get('key_responsibilities', '')
+            service_files = subsystem.get('service_files', [])
+            
+            # 提取服务文件的代码片段（充分利用长上下文）
+            file_samples = []
+            # qwen3-coder 256K tokens ≈ 可以分析 10-15 个文件的完整内容（考虑 prompt 开销）
+            for file_path in service_files[:12]:  # 分析前 12 个文件（充分利用长上下文）
+                full_path = os.path.join(repo_path, file_path)
+                if os.path.exists(full_path):
+                    try:
+                        with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            content = f.read()
+                        lines = content.split('\n')
+                        
+                        # 如果文件不大（< 1500 行），直接包含完整内容
+                        if len(lines) <= 1500:
+                            file_samples.append({
+                                'path': file_path,
+                                'content': content,
+                                'line_count': len(lines)
+                            })
+                        else:
+                            # 大文件：包含开头和结尾（通常包含关键信息）
+                            # 前 2000 行 + 后 1000 行
+                            file_content = '\n'.join(
+                                lines[:2000] + 
+                                [f'\n# ... (省略 {len(lines) - 3000} 行) ...\n'] + 
+                                lines[-1000:]
+                            )
+                            file_samples.append({
+                                'path': file_path,
+                                'content': file_content,
+                                'line_count': len(lines),
+                                'sampled': True
+                            })
+                    except Exception as e:
+                        logger.debug(f"[子系统匹配] 读取文件失败: {file_path}, {e}")
+                        continue
+            
+            if not file_samples:
+                continue
+            
+            prompt = f"""分析以下功能子系统，判断它是前端还是后端，并匹配相应的路径。
+
+子系统名称: {subsystem_name}
+子系统职责: {subsystem_resp}
+
+相关文件:
+{json.dumps(file_samples, ensure_ascii=False, indent=2)}
+
+可用前端路径: {list(frontend_paths_map.keys())[:10]}
+可用后端路由: {list(backend_routes_map.keys())[:10]}
+
+请判断：
+1. 是前端还是后端（或两者都有）
+2. 匹配的前端路径（如果有，从可用前端路径中选择）
+3. 匹配的后端路由（如果有，从可用后端路由中选择）
+4. 判断理由
+
+返回 JSON 格式：
+{{
+  "type": "backend",
+  "frontend_path": null,
+  "backend_route": "/api/trace",
+  "reason": "该子系统包含 Python 服务文件，处理追踪逻辑，属于后端服务"
+}}
+
+注意：
+- 如果类型是 "frontend"，frontend_path 不能为 null
+- 如果类型是 "backend"，backend_route 不能为 null
+- 如果类型是 "both"，frontend_path 和 backend_route 都不能为 null
+- 如果无法判断，type 设为 "unknown"
+"""
+            
+            # 调用 LLM
+            try:
+                llm_service = self._get_llm_service()
+                cache_key = f"subsystem_match:{subsystem_name}:{hashlib.md5(str(service_files).encode()).hexdigest()[:16]}"
+                match_result = llm_service.call_llm_with_cache(prompt, cache_key=cache_key)
+                parsed_result = llm_service.parse_json_response(match_result)
                 
-                # 列出可用的前端路径和后端路由（前5个）
-                if frontend_paths_map:
-                    logger.info(f"    可用前端路径: {', '.join(list(frontend_paths_map.keys())[:5])}")
-                if backend_routes_map:
-                    logger.info(f"    可用后端路由: {', '.join(list(backend_routes_map.keys())[:5])}")
+                # 应用匹配结果
+                match_type = parsed_result.get('type', 'unknown')
+                frontend_path = parsed_result.get('frontend_path')
+                backend_route = parsed_result.get('backend_route')
                 
-                # 分析为什么没匹配上
-                subsystem_name = sub['subsystem_name'].lower()
-                subsystem_resp = sub['key_responsibilities'].lower()
-                subsystem_keywords = []
-                subsystem_keywords.extend(subsystem_name.split())
-                if '前端' in subsystem_resp or 'ui' in subsystem_resp or '界面' in subsystem_resp:
-                    subsystem_keywords.extend(['frontend', 'ui', 'component'])
-                if '后端' in subsystem_resp or 'api' in subsystem_resp or '服务' in subsystem_resp:
-                    subsystem_keywords.extend(['backend', 'api', 'service'])
+                # 更新子系统
+                for enriched_sub in enriched_subsystems:
+                    if enriched_sub.get('subsystem_name') == subsystem_name:
+                        if match_type in ['frontend', 'both'] and frontend_path:
+                            enriched_sub['frontend_path'] = frontend_path
+                        if match_type in ['backend', 'both'] and backend_route:
+                            enriched_sub['backend_route'] = backend_route
+                        enriched_sub['match_reason'] = parsed_result.get('reason', '')
+                        break
                 
-                logger.debug(f"    提取的关键词: {subsystem_keywords}")
-                
-                # 检查职责是否足够具体
-                if len(sub['key_responsibilities']) < 50:
-                    logger.warning(f"    ⚠️ 职责描述过短（{len(sub['key_responsibilities'])}字符），可能不够具体，无法提取有效关键词")
-                elif not any(keyword in subsystem_resp for keyword in ['前端', '后端', 'api', 'ui', '界面', '组件', '服务', '路由']):
-                    logger.warning(f"    ⚠️ 职责描述中缺少明确的前端/后端关键词，无法判断是前端还是后端子系统")
+                logger.info(f"[子系统匹配] LLM 匹配成功: {subsystem_name} -> {match_type}")
+            except Exception as e:
+                logger.warning(f"[子系统匹配] LLM 匹配失败: {subsystem_name}, 错误: {e}")
+                # 降级：使用关键词匹配的结果
         
         return enriched_subsystems

@@ -3,12 +3,13 @@
 MVP 版本 - 8 个核心接口
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import Optional, List, Dict
 from pydantic import BaseModel
 import json
+import requests
 from datetime import datetime, timedelta
 
 from app.core.logging import logger
@@ -24,6 +25,81 @@ from app.services.code_symbol_service import get_code_symbol_service
 
 
 router = APIRouter(prefix="/code-analysis", tags=["代码库分析"])
+
+
+def _get_cache_data(db: Session, repo_id: int, cache_type: str, cache_key: str = 'full') -> Optional[Dict]:
+    """
+    从缓存中读取数据（支持 MySQL 和 MinIO）
+    
+    Args:
+        db: 数据库会话
+        repo_id: 仓库ID
+        cache_type: 缓存类型
+        cache_key: 缓存键（默认 'full'）
+        
+    Returns:
+        缓存数据（字典），如果不存在则返回 None
+    """
+    try:
+        # 向后兼容：先尝试查询包含 minio_path 的字段，如果失败则降级
+        try:
+            result = db.execute(
+                text("""SELECT cache_data, minio_path FROM code_analysis_cache 
+                WHERE repository_id = :repo_id AND cache_type = :cache_type AND cache_key = :cache_key
+                AND (expires_at IS NULL OR expires_at > NOW())
+                ORDER BY created_at DESC LIMIT 1"""),
+                {"repo_id": repo_id, "cache_type": cache_type, "cache_key": cache_key}
+            ).fetchone()
+            
+            if not result:
+                return None
+            
+            cache_data_json, minio_path = result
+        except Exception as e:
+            # 如果表没有 minio_path 字段，降级到只查询 cache_data
+            if 'minio_path' in str(e).lower() or 'unknown column' in str(e).lower():
+                logger.debug(f"表结构不支持 minio_path，使用降级查询")
+                result = db.execute(
+                    text("""SELECT cache_data FROM code_analysis_cache 
+                    WHERE repository_id = :repo_id AND cache_type = :cache_type AND cache_key = :cache_key
+                    AND (expires_at IS NULL OR expires_at > NOW())
+                    ORDER BY created_at DESC LIMIT 1"""),
+                    {"repo_id": repo_id, "cache_type": cache_type, "cache_key": cache_key}
+                ).fetchone()
+                
+                if not result:
+                    return None
+                
+                cache_data_json = result[0]
+                minio_path = None
+            else:
+                raise
+        
+        # 如果数据存储在 MinIO
+        if minio_path:
+            try:
+                from app.services.minio_storage_service import MinioStorageService
+                minio_service = MinioStorageService()
+                file_content = minio_service.download_file(minio_path)
+                cache_data = json.loads(file_content.decode('utf-8'))
+                logger.debug(f"从 MinIO 读取缓存: {minio_path}")
+                return cache_data
+            except Exception as minio_error:
+                logger.error(f"从 MinIO 读取缓存失败: {minio_path}, 错误: {minio_error}")
+                # 如果 MinIO 读取失败，尝试从 MySQL 读取（降级）
+                if cache_data_json:
+                    return json.loads(cache_data_json)
+                return None
+        
+        # 如果数据存储在 MySQL
+        if cache_data_json:
+            return json.loads(cache_data_json)
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"读取缓存失败: repo_id={repo_id}, cache_type={cache_type}, 错误: {e}")
+        return None
 
 
 # =============================================
@@ -392,22 +468,14 @@ async def get_code_structure(
         api_stats = {"frontend": 0, "backend": 0}
         database_tables = 0
         
-        cache_result = db.execute(
-            text("""SELECT cache_data FROM code_analysis_cache 
-            WHERE repository_id = :repo_id AND cache_type = 'statistics' AND cache_key = 'full'
-            AND (expires_at IS NULL OR expires_at > NOW())
-            ORDER BY created_at DESC LIMIT 1"""),
-            {"repo_id": repo_id}
-        )
-        cached_stats = cache_result.fetchone()
+        cached_stats_data = _get_cache_data(db, repo_id, 'statistics', 'full')
         
-        if cached_stats:
+        if cached_stats_data:
             try:
-                cached_data = json.loads(cached_stats[0])
-                if 'api_endpoints' in cached_data:
-                    api_stats = cached_data['api_endpoints']
-                if 'database_tables' in cached_data:
-                    database_tables = cached_data.get('database_tables', 0)
+                if 'api_endpoints' in cached_stats_data:
+                    api_stats = cached_stats_data['api_endpoints']
+                if 'database_tables' in cached_stats_data:
+                    database_tables = cached_stats_data.get('database_tables', 0)
             except Exception as e:
                 logger.warning(f"解析缓存统计信息失败: {e}")
         
@@ -471,18 +539,10 @@ async def get_code_structure(
             })
         
         # 2. 如果没有数据库数据，尝试从缓存获取（降级方案）
-        result = db.execute(
-            text("""SELECT cache_data FROM code_analysis_cache 
-            WHERE repository_id = :repo_id AND cache_type = 'structure' AND cache_key = 'full'
-            AND (expires_at IS NULL OR expires_at > NOW())
-            ORDER BY created_at DESC LIMIT 1"""),
-            {"repo_id": repo_id}
-        )
-        cached = result.fetchone()
+        cache_data = _get_cache_data(db, repo_id, 'structure', 'full')
         
-        if cached:
+        if cache_data:
             logger.info(f"使用缓存的代码结构: repo_id={repo_id}")
-            cache_data = json.loads(cached[0])
             # 缓存中可能只有统计信息，需要补充files字段
             if 'files' not in cache_data or len(cache_data.get('files', [])) == 0:
                 cache_data['files'] = cache_data.get('sample_files', [])
@@ -676,49 +736,386 @@ async def analyze_file(
 
 class CodeQARequest(BaseModel):
     """代码问答请求"""
-    repository_id: int
     question: str
     context_files: Optional[List[str]] = None
 
 
-@router.post("/qa")
+@router.post("/repositories/{repository_id}/qa")
 async def code_qa(
+    repository_id: int,
     request: CodeQARequest,
+    session_id: Optional[str] = Query(None, description="会话ID（可选，如果不提供则创建新会话）"),
     db: Session = Depends(get_db)
 ):
     """
-    代码问答
+    代码问答（保存到数据库）
     
     Args:
         request: 问答请求，包含 repository_id、question 和可选的 context_files
+        session_id: 会话ID（可选，如果不提供则创建新会话）
         
     Returns:
-        问答结果
+        问答结果（包含 session_id 和 record_id）
     """
+    import os
+    import uuid
+    from datetime import datetime
+    from app.models.code_repository import CodeRepository
+    from app.services.code_qa_service import CodeQAService
+    from app.services.code_qa_storage_service import CodeQAStorageService
+    from app.config.settings import settings
+    
     try:
-        from app.models.code_repository import CodeRepository
-        
-        # 获取仓库路径
-        repo = db.query(CodeRepository).filter(CodeRepository.id == request.repository_id).first()
+        # 1. 获取仓库信息
+        repo = db.query(CodeRepository).filter(
+            CodeRepository.id == repository_id
+        ).first()
         
         if not repo or not repo.local_path:
             return error_response("仓库未克隆")
         
-        # 调用问答服务（传入 db 以支持向量搜索和 rerank）
+        # 2. 处理问答（支持 Function Calling）
         qa_service = CodeQAService(db=db)
-        answer = await qa_service.answer_question(
+        answer_data = await qa_service.answer_question(
             repo_path=repo.local_path,
             question=request.question,
             context_files=request.context_files,
             use_vector_search=True,  # 启用混合搜索（向量 + 关键词）
-            use_rerank=True  # 启用 Rerank 精排
+            use_rerank=True,  # 启用 Rerank 精排
+            use_function_calling=True  # 启用 Function Calling（默认启用）
         )
         
-        return success_response(answer)
+        # 3. 生成记录ID
+        record_id = str(uuid.uuid4())
+        
+        # 4. 如果没有提供 session_id，创建新会话
+        if not session_id:
+            session_id = str(uuid.uuid4())
+        
+        # 5. 构建上下文数据（code_qa_service 只返回 sources，需要重新读取文件内容）
+        context_data = []
+        for file_path in answer_data.get('sources', []):
+            full_path = os.path.join(repo.local_path, file_path)
+            if os.path.exists(full_path):
+                try:
+                    with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read()
+                    # 可以在这里解析代码结构（可选）
+                    context_data.append({
+                        'path': file_path,
+                        'content': content[:3000],  # 限制长度
+                        'language': qa_service.parser_service.detect_language(full_path)
+                    })
+                except Exception as e:
+                    logger.warning(f"读取上下文文件失败 {full_path}: {e}")
+        
+        # 6. 保存到 OpenSearch 和 MySQL（按照设计文档：先 OpenSearch，再 MySQL，如果 OpenSearch 失败则不保存 MySQL）
+        storage_service = CodeQAStorageService(db=db)
+        
+        try:
+            # 先保存到 OpenSearch
+            opensearch_doc_id = await storage_service.save_qa_to_opensearch(
+                record_id=record_id,
+                session_id=session_id,
+                repository_id=repository_id,
+                question=request.question,
+                answer=answer_data['answer'],
+                sources=answer_data.get('sources', []),
+                context_data=context_data,
+                code_snippets=answer_data.get('code_snippets'),
+                mermaid_diagrams=answer_data.get('call_chain', {}).get('mermaid_diagram'),
+                question_type=answer_data.get('question_type'),
+                classification=answer_data.get('classification'),
+                call_chain_info=answer_data.get('call_chain'),
+                processing_info={
+                    "processing_time": answer_data.get('processing_time'),
+                    "token_usage": answer_data.get('token_usage'),
+                    "model_used": settings.CODE_LLM_MODEL
+                }
+            )
+            
+            # 再保存到 MySQL（只有 OpenSearch 成功后才保存）
+            await storage_service.save_qa_to_mysql(
+                record_id=record_id,
+                session_id=session_id,
+                repository_id=repository_id,
+                question=request.question,
+                answer=answer_data['answer'],
+                opensearch_doc_id=opensearch_doc_id,
+                sources=answer_data.get('sources', []),
+                question_type=answer_data.get('question_type'),
+                processing_time=answer_data.get('processing_time'),
+                token_usage=answer_data.get('token_usage'),
+                has_mermaid=bool(answer_data.get('call_chain', {}).get('mermaid_diagram')),
+                has_code_snippets=bool(answer_data.get('code_snippets'))
+            )
+            
+            logger.info(f"问答记录保存成功: record_id={record_id}, session_id={session_id}")
+            
+        except Exception as storage_error:
+            # 保存失败，记录错误但不影响返回结果（按照设计文档，应该回滚，但这里选择记录错误并继续返回结果）
+            logger.error(f"保存问答记录失败: {storage_error}", exc_info=True)
+            # 注意：如果 OpenSearch 保存失败，MySQL 不会保存（因为异常会阻止执行到 MySQL 保存代码）
+        
+        # 7. 返回结果（包含 session_id 和 record_id）
+        return success_response({
+            **answer_data,
+            "session_id": session_id,
+            "record_id": record_id
+        })
     
     except Exception as e:
-        logger.error(f"代码问答失败: {e}")
+        logger.error(f"代码问答失败: {e}", exc_info=True)
         return error_response(f"代码问答失败: {str(e)}")
+
+
+# =============================================
+# 代码问答查询 API
+# =============================================
+
+@router.post("/repositories/{repository_id}/qa/sessions")
+async def create_qa_session(
+    repository_id: int,
+    session_name: str = None,
+    db: Session = Depends(get_db)
+):
+    """
+    创建代码问答会话
+    """
+    import uuid
+    from datetime import datetime
+    from app.models.code_qa import CodeQASession
+    
+    try:
+        session_id = str(uuid.uuid4())
+        session = CodeQASession(
+            session_id=session_id,
+            session_name=session_name or f"代码问答 - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            repository_id=repository_id,
+            status='active'
+        )
+        db.add(session)
+        db.commit()
+        
+        return success_response({"session_id": session_id})
+    except Exception as e:
+        logger.error(f"创建会话失败: {e}", exc_info=True)
+        return error_response(f"创建会话失败: {str(e)}")
+
+
+@router.get("/repositories/{repository_id}/qa/sessions")
+async def get_qa_sessions(
+    repository_id: int,
+    page: int = 1,
+    page_size: int = 20,
+    db: Session = Depends(get_db)
+):
+    """
+    查询代码问答会话列表
+    """
+    try:
+        from app.services.code_qa_storage_service import CodeQAStorageService
+        
+        storage_service = CodeQAStorageService(db=db)
+        result = storage_service.get_qa_sessions(
+            repository_id=repository_id,
+            page=page,
+            page_size=page_size
+        )
+        return success_response(result)
+    except Exception as e:
+        logger.error(f"查询会话列表失败: {e}", exc_info=True)
+        return error_response(f"查询会话列表失败: {str(e)}")
+
+
+@router.get("/qa/sessions/{session_id}/records")
+async def get_qa_records(
+    session_id: str,
+    page: int = 1,
+    page_size: int = 50,
+    db: Session = Depends(get_db)
+):
+    """
+    查询会话中的问答记录列表
+    """
+    try:
+        from app.services.code_qa_storage_service import CodeQAStorageService
+        
+        storage_service = CodeQAStorageService(db=db)
+        result = storage_service.get_qa_records(
+            session_id=session_id,
+            page=page,
+            page_size=page_size
+        )
+        return success_response(result)
+    except Exception as e:
+        logger.error(f"查询记录列表失败: {e}", exc_info=True)
+        return error_response(f"查询记录列表失败: {str(e)}")
+
+
+@router.get("/qa/records/{record_id}")
+async def get_qa_record_detail(
+    record_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    查询完整的问答记录（从 OpenSearch）
+    """
+    try:
+        from app.models.code_qa import CodeQARecord
+        from app.services.code_qa_storage_service import CodeQAStorageService
+        
+        # 先从 MySQL 验证记录存在
+        record = db.query(CodeQARecord).filter(
+            CodeQARecord.record_id == record_id,
+            CodeQARecord.is_deleted == False
+        ).first()
+        
+        if not record:
+            return error_response("记录不存在")
+        
+        # 从 OpenSearch 获取完整内容
+        storage_service = CodeQAStorageService(db=db)
+        detail = storage_service.get_qa_record_detail(record_id)
+        
+        if not detail:
+            return error_response("获取详细内容失败")
+        
+        return success_response(detail)
+    except Exception as e:
+        logger.error(f"查询记录详情失败: {e}", exc_info=True)
+        return error_response(f"查询记录详情失败: {str(e)}")
+
+
+@router.post("/repositories/{repository_id}/qa/search")
+async def search_qa_records(
+    repository_id: int,
+    query: str,
+    search_mode: str = "hybrid",  # vector/keyword/hybrid
+    top_k: int = 10,
+    db: Session = Depends(get_db)
+):
+    """
+    搜索问答记录（语义搜索）
+    """
+    try:
+        from app.services.code_qa_storage_service import CodeQAStorageService
+        
+        storage_service = CodeQAStorageService(db=db)
+        results = storage_service.search_qa_records(
+            repository_id=repository_id,
+            query=query,
+            search_mode=search_mode,
+            top_k=top_k
+        )
+        
+        return success_response({
+            "total": len(results),
+            "results": results
+        })
+    except Exception as e:
+        logger.error(f"搜索问答记录失败: {e}", exc_info=True)
+        return error_response(f"搜索问答记录失败: {str(e)}")
+
+
+class CodeExplanationRequest(BaseModel):
+    """代码解释请求"""
+    code: str  # 选中的代码
+    file_path: Optional[str] = None  # 文件路径（可选，用于提供上下文）
+    language: Optional[str] = None  # 编程语言（可选，用于优化解释）
+
+
+@router.post("/repositories/{repository_id}/explain-code")
+async def explain_code(
+    repository_id: int,
+    request: CodeExplanationRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    解释选中的代码
+    
+    使用代码大模型（CODE_LLM_MODEL）对选中的代码进行详细解释
+    """
+    try:
+        from app.config.settings import settings
+        
+        code = request.code.strip()
+        if not code:
+            return error_response("代码不能为空")
+        
+        # 构建解释提示词
+        language_hint = ""
+        if request.language:
+            language_hint = f"（编程语言：{request.language}）"
+        
+        file_hint = ""
+        if request.file_path:
+            file_hint = f"\n文件路径：{request.file_path}"
+        
+        prompt = f"""你是一个专业的代码解释助手。请详细解释以下代码的功能、逻辑和关键点。
+
+{file_hint}
+{language_hint}
+
+代码：
+```{request.language or ''}
+{code}
+```
+
+请提供以下内容：
+1. 代码的整体功能和作用
+2. 关键逻辑和实现细节
+3. 重要的变量、函数或类的说明
+4. 可能的注意事项或最佳实践建议
+
+解释："""
+        
+        # 调用 Ollama API（使用代码大模型）
+        model = getattr(settings, 'CODE_LLM_MODEL', settings.OLLAMA_MODEL)
+        ollama_url = settings.OLLAMA_BASE_URL or "http://localhost:11434"
+        
+        logger.info(f"开始解释代码: 仓库ID={repository_id}, 代码长度={len(code)}, 模型={model}")
+        
+        response = requests.post(
+            f"{ollama_url}/api/generate",
+            json={
+                "model": model,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.3,  # 降低温度，使解释更准确
+                    "top_p": 0.9,
+                    "num_predict": 2000  # 允许较长的解释
+                }
+            },
+            timeout=120  # 2分钟超时
+        )
+        response.raise_for_status()
+        result = response.json()
+        explanation = result.get("response", "").strip()
+        
+        if not explanation:
+            explanation = "抱歉，无法生成代码解释，请稍后重试。"
+        
+        logger.info(f"代码解释成功: 解释长度={len(explanation)} 字符")
+        
+        return success_response({
+            "explanation": explanation,
+            "code": code,
+            "file_path": request.file_path,
+            "language": request.language,
+            "model": model
+        })
+        
+    except requests.exceptions.Timeout:
+        logger.error(f"代码解释超时: 仓库ID={repository_id}")
+        return error_response("代码解释超时，请稍后重试", code=504)
+    except requests.exceptions.RequestException as e:
+        logger.error(f"代码解释请求失败: {e}", exc_info=True)
+        return error_response(f"代码解释请求失败: {str(e)}", code=500)
+    except Exception as e:
+        logger.error(f"代码解释失败: {e}", exc_info=True)
+        return error_response(f"代码解释失败: {str(e)}")
 
 
 # =============================================
@@ -762,18 +1159,11 @@ async def get_wiki_content(
         # 注意：即使 force_refresh=False，也要检查是否有任务正在运行
         # 如果有任务正在运行，即使没有缓存，也应该等待任务完成而不是发送新任务
         if not force_refresh:
-            result = db.execute(
-                text("""SELECT cache_data FROM code_analysis_cache 
-                WHERE repository_id = :repo_id AND cache_type = 'wiki_content' AND cache_key = 'full'
-                AND (expires_at IS NULL OR expires_at > NOW())
-                ORDER BY created_at DESC LIMIT 1"""),
-                {"repo_id": repo_id}
-            )
-            cached = result.fetchone()
+            cached_data = _get_cache_data(db, repo_id, 'wiki_content', 'full')
             
-            if cached:
+            if cached_data:
                 logger.info(f"使用缓存的 Wiki 内容: repo_id={repo_id}")
-                return success_response(json.loads(cached[0]))
+                return success_response(cached_data)
         
         # 2.5. 检查是否有任务正在执行（即使没有缓存，也要避免重复发送任务）
         from app.core.cache import cache_manager
@@ -794,18 +1184,10 @@ async def get_wiki_content(
         # 2.6. 再次检查缓存（可能在检查锁的瞬间缓存刚写入）
         # 这是一个双重检查，避免在任务刚完成但锁还没释放时发送新任务
         if not force_refresh:
-            result = db.execute(
-                text("""SELECT cache_data FROM code_analysis_cache 
-                WHERE repository_id = :repo_id AND cache_type = 'wiki_content' AND cache_key = 'full'
-                AND (expires_at IS NULL OR expires_at > NOW())
-                ORDER BY created_at DESC LIMIT 1"""),
-                {"repo_id": repo_id}
-            )
-            cached = result.fetchone()
+            cached_data = _get_cache_data(db, repo_id, 'wiki_content', 'full')
             
-            if cached:
+            if cached_data:
                 logger.info(f"使用缓存的 Wiki 内容（二次检查）: repo_id={repo_id}")
-                cached_data = json.loads(cached[0])
                 # 记录关键字段用于调试
                 logger.info(f"[API] 📤 步骤6: 准备返回 Wiki 内容: repo_id={repo_id}")
                 logger.info(f"[API] 📤 步骤6.1: 从数据库读取的数据键: {list(cached_data.keys())}")
@@ -1526,6 +1908,136 @@ async def query_call_chain(
         return error_response(f"查询调用链失败: {str(e)}")
 
 
+# =============================================
+# 12. 代码导航 API（类似 LSP）
+# =============================================
+
+@router.get("/navigation/definition")
+async def get_definition(
+    repository_id: int,
+    file_path: str = Query(..., description="文件路径（相对路径）"),
+    line: int = Query(..., description="行号（1-based）"),
+    column: int = Query(0, description="列号（0-based）"),
+    db: Session = Depends(get_db)
+):
+    """
+    获取符号定义位置（Go to Definition）
+    
+    Args:
+        repository_id: 仓库ID
+        file_path: 文件路径
+        line: 行号
+        column: 列号
+        
+    Returns:
+        定义位置信息
+    """
+    try:
+        from app.services.code_navigation_service import CodeNavigationService
+        
+        nav_service = CodeNavigationService(db=db)
+        definition = nav_service.get_definition(
+            repository_id=repository_id,
+            file_path=file_path,
+            line=line,
+            column=column
+        )
+        
+        if definition:
+            return success_response(definition)
+        else:
+            return error_response("未找到符号定义", code=404)
+    
+    except Exception as e:
+        logger.error(f"获取定义位置失败: {e}", exc_info=True)
+        return error_response(f"获取定义位置失败: {str(e)}")
+
+
+@router.get("/navigation/references")
+async def get_references(
+    repository_id: int,
+    file_path: str = Query(..., description="文件路径（相对路径）"),
+    line: int = Query(..., description="行号（1-based）"),
+    column: int = Query(0, description="列号（0-based）"),
+    include_definition: bool = Query(True, description="是否包含定义位置"),
+    db: Session = Depends(get_db)
+):
+    """
+    获取符号的所有引用位置（Find References）
+    
+    Args:
+        repository_id: 仓库ID
+        file_path: 文件路径
+        line: 行号
+        column: 列号
+        include_definition: 是否包含定义位置
+        
+    Returns:
+        引用位置列表
+    """
+    try:
+        from app.services.code_navigation_service import CodeNavigationService
+        
+        nav_service = CodeNavigationService(db=db)
+        references = nav_service.get_references(
+            repository_id=repository_id,
+            file_path=file_path,
+            line=line,
+            column=column,
+            include_definition=include_definition
+        )
+        
+        return success_response({
+            "total": len(references),
+            "references": references
+        })
+    
+    except Exception as e:
+        logger.error(f"获取引用位置失败: {e}", exc_info=True)
+        return error_response(f"获取引用位置失败: {str(e)}")
+
+
+@router.get("/navigation/hover")
+async def get_hover_info(
+    repository_id: int,
+    file_path: str = Query(..., description="文件路径（相对路径）"),
+    line: int = Query(..., description="行号（1-based）"),
+    column: int = Query(0, description="列号（0-based）"),
+    db: Session = Depends(get_db)
+):
+    """
+    获取悬停信息（Hover Info）
+    
+    Args:
+        repository_id: 仓库ID
+        file_path: 文件路径
+        line: 行号
+        column: 列号
+        
+    Returns:
+        悬停信息
+    """
+    try:
+        from app.services.code_navigation_service import CodeNavigationService
+        
+        nav_service = CodeNavigationService(db=db)
+        hover_info = nav_service.get_hover_info(
+            repository_id=repository_id,
+            file_path=file_path,
+            line=line,
+            column=column
+        )
+        
+        if hover_info:
+            return success_response(hover_info)
+        else:
+            return error_response("未找到符号信息", code=404)
+    
+    except Exception as e:
+        logger.error(f"获取悬停信息失败: {e}", exc_info=True)
+        return error_response(f"获取悬停信息失败: {str(e)}")
+
+
 @router.get("/query/dependency-path")
 async def query_dependency_path(
     repository_id: int,
@@ -1807,17 +2319,11 @@ async def get_agent_analysis_result(
         
         # 1. 检查缓存
         if use_cache:
-            result = db.execute(
-                text("""SELECT cache_data FROM code_analysis_cache 
-                WHERE repository_id = :repo_id AND cache_type = 'agent_analysis' AND cache_key = 'full'
-                AND (expires_at IS NULL OR expires_at > NOW())"""),
-                {"repo_id": repo_id}
-            )
-            cached = result.fetchone()
+            cached_data = _get_cache_data(db, repo_id, 'agent_analysis', 'full')
             
-            if cached:
+            if cached_data:
                 logger.info(f"返回缓存的 Agent 分析结果: repo_id={repo_id}")
-                return success_response(json.loads(cached[0]))
+                return success_response(cached_data)
         
         return error_response("未找到分析结果，请先执行分析任务")
     

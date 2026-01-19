@@ -1,4 +1,4 @@
-﻿"""
+"""
 Cache Module
 """
 
@@ -103,6 +103,30 @@ class CacheManager:
         except Exception as e:
             print(f"释放锁失败: {e}")
             return False
+    
+    def delete_pattern(self, pattern: str) -> int:
+        """按模式删除 Redis 键（同步方法，用于批量删除）
+        
+        Args:
+            pattern: 键的模式（支持 * 通配符）
+            
+        Returns:
+            删除的键数量
+        """
+        try:
+            deleted_count = 0
+            # 使用 SCAN 迭代所有匹配的键
+            cursor = 0
+            while True:
+                cursor, keys = self.redis_client.scan(cursor, match=pattern, count=100)
+                if keys:
+                    deleted_count += self.redis_client.delete(*keys)
+                if cursor == 0:
+                    break
+            return deleted_count
+        except Exception as e:
+            print(f"按模式删除缓存失败: {e}")
+            return 0
 
 # 全局缓存管理器实例
 cache_manager = CacheManager()

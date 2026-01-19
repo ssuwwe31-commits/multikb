@@ -215,21 +215,27 @@ COMMENT='代码仓库表';
 CREATE TABLE IF NOT EXISTS `code_analysis_cache` (
     `id` INT NOT NULL AUTO_INCREMENT,
     `repository_id` INT NOT NULL,
-    `cache_type` VARCHAR(50) NOT NULL COMMENT '缓存类型: structure/dependencies/summary/qa',
+    `cache_type` VARCHAR(50) NOT NULL COMMENT '缓存类型: structure/dependencies/summary/qa/wiki_content',
     `cache_key` VARCHAR(255) NOT NULL COMMENT '缓存键（如文件路径、问题hash）',
-    `cache_data` JSON NOT NULL COMMENT '缓存数据',
+    `minio_path` VARCHAR(500) NULL COMMENT 'MinIO 对象路径（如果数据存储在 MinIO）',
+    `file_size` BIGINT NULL COMMENT '文件大小（字节）',
+    `is_compressed` BOOLEAN DEFAULT FALSE COMMENT '是否压缩',
+    `cache_data` JSON NULL COMMENT '缓存数据（小数据直接存储，大数据存储在 MinIO）',
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     `expires_at` DATETIME COMMENT '过期时间',
+    `is_deleted` BOOLEAN DEFAULT FALSE COMMENT '是否删除',
     
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_repo_cache` (`repository_id`, `cache_type`, `cache_key`),
     INDEX `idx_repository_id` (`repository_id`),
     INDEX `idx_cache_type` (`cache_type`),
     INDEX `idx_expires_at` (`expires_at`),
+    INDEX `idx_minio_path` (`minio_path`(255)),
     
     FOREIGN KEY (`repository_id`) REFERENCES `code_repositories`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci 
-COMMENT='代码分析结果缓存表';
+COMMENT='代码分析结果缓存表（支持 MinIO 大文件存储）';
 
 -- 3.7. 代码文件表
 CREATE TABLE IF NOT EXISTS `code_files` (

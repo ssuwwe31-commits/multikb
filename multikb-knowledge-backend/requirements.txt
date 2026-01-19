@@ -224,5 +224,8 @@ zlib-state==0.1.10
 # 代码库分析依赖（2026-01-12 新增）
 # =============================================
 GitPython==3.1.43          # Git 操作
-tree-sitter==0.21.3        # 代码解析（AST）
-tree-sitter-languages==1.10.2  # 预编译的语言库（Python/JS/TS等）
+tree-sitter>=0.25.2        # 代码解析（AST）
+tree-sitter-language-pack>=0.13.0  # 预编译的语言库（支持 165+ 语言，包括 XML）
+# 注意：已从 tree-sitter-languages 升级到 tree-sitter-language-pack
+# tree-sitter-languages 不再维护，且不支持 XML
+# tree-sitter-language-pack 是活跃维护的 fork，支持更多语言

@@ -564,41 +564,6 @@
             </div>
           </section>
 
-          <!-- AI 聊天 -->
-          <div class="ai-chat-section">
-            <div class="chat-header">
-              <span>询问 AI 关于 {{ repository?.repo_name }}</span>
-            </div>
-            
-            <!-- 聊天历史 -->
-            <div v-if="chatHistory.length > 0" class="chat-history">
-              <div 
-                v-for="(item, index) in chatHistory" 
-                :key="index"
-                class="chat-message"
-              >
-                <div class="message-question">
-                  <strong>问:</strong> {{ item.question }}
-                </div>
-                <div class="message-answer" v-html="formatMarkdown(item.answer)"></div>
-              </div>
-            </div>
-            
-            <div class="chat-input-wrapper">
-              <el-input
-                v-model="chatQuestion"
-                placeholder="询问 AI 关于此代码库..."
-                @keyup.enter="handleChatSubmit"
-                :disabled="chatLoading"
-              >
-                <template #append>
-                  <el-button @click="handleChatSubmit" :loading="chatLoading">
-                    发送
-                  </el-button>
-                </template>
-              </el-input>
-            </div>
-          </div>
         </div>
       </main>
 
@@ -648,9 +613,6 @@ const emit = defineEmits<{
 // 状态
 const showRelevantFiles = ref(false)
 const activeSection = ref('overview')
-const chatQuestion = ref('')
-const chatLoading = ref(false)
-const chatHistory = ref<Array<{ question: string; answer: string }>>([])
 
 // 代码异味分页
 const codeSmellsPage = ref(1)
@@ -1422,42 +1384,6 @@ async function refreshWiki() {
   }
 }
 
-async function handleChatSubmit() {
-  if (!chatQuestion.value.trim()) return
-  
-  const question = chatQuestion.value
-  chatQuestion.value = ''
-  chatLoading.value = true
-  
-  try {
-    const res = await codeRepositoryApi.codeQA({
-      repository_id: props.repoId,
-      question
-    })
-    
-    if (res.data?.answer) {
-      chatHistory.value.push({
-        question,
-        answer: res.data.answer
-      })
-      
-      // 滚动到底部
-      nextTick(() => {
-        const chatSection = document.querySelector('.ai-chat-section')
-        if (chatSection) {
-          chatSection.scrollIntoView({ behavior: 'smooth', block: 'end' })
-        }
-      })
-    } else {
-      ElMessage.warning('AI 未返回答案')
-    }
-  } catch (error: any) {
-    ElMessage.error('AI 问答失败')
-    console.error('AI 问答失败:', error)
-  } finally {
-    chatLoading.value = false
-  }
-}
 
 function formatMarkdown(text: string): string {
   if (!text) return ''
@@ -2066,84 +1992,6 @@ onMounted(() => {
     }
   }
   
-  .ai-chat-section {
-    margin-top: 80px;
-    padding-top: 40px;
-    border-top: 2px solid #e5e7eb;
-    
-    .chat-header {
-      font-size: 18px;
-      font-weight: 600;
-      margin-bottom: 16px;
-      color: #111827;
-    }
-    
-    .chat-history {
-      margin-bottom: 24px;
-      max-height: 400px;
-      overflow-y: auto;
-      
-      .chat-message {
-        margin-bottom: 24px;
-        padding: 16px;
-        background: #f9fafb;
-        border-radius: 8px;
-        
-        .message-question {
-          margin-bottom: 12px;
-          color: #374151;
-          font-size: 14px;
-          
-          strong {
-            color: #2563eb;
-          }
-        }
-        
-        .message-answer {
-          color: #111827;
-          line-height: 1.7;
-          font-size: 14px;
-          
-          :deep(h3) {
-            font-size: 16px;
-            margin: 12px 0 8px;
-          }
-          
-          :deep(h4) {
-            font-size: 14px;
-            margin: 10px 0 6px;
-          }
-          
-          :deep(code) {
-            background: #f3f4f6;
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-family: monospace;
-            font-size: 13px;
-          }
-          
-          :deep(pre) {
-            background: #1f2937;
-            color: #f9fafb;
-            padding: 12px;
-            border-radius: 6px;
-            overflow-x: auto;
-            margin: 12px 0;
-            
-            code {
-              background: transparent;
-              padding: 0;
-              color: inherit;
-            }
-          }
-        }
-      }
-    }
-    
-    .chat-input-wrapper {
-      max-width: 600px;
-    }
-  }
   
   .overview-content {
     line-height: 1.7;

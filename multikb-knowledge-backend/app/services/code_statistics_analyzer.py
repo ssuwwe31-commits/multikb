@@ -15,12 +15,13 @@ from app.core.logging import logger
 class CodeStatisticsAnalyzer:
     """代码统计信息分析器"""
     
-    def calculate_statistics(self, analyzed_files: List[Dict]) -> Dict:
+    def calculate_statistics(self, analyzed_files: List[Dict], repo_path: str = None) -> Dict:
         """
         计算统计信息
         
         Args:
             analyzed_files: 已分析的文件列表
+            repo_path: 仓库路径（可选，用于 LLM 增强检测）
             
         Returns:
             统计信息字典
@@ -51,9 +52,10 @@ class CodeStatisticsAnalyzer:
             
             symbols = file_data.get('symbols', [])
             for symbol in symbols:
-                if symbol['type'] == 'function':
+                # 统计函数和方法（Java 使用 'method'，其他语言使用 'function'）
+                if symbol['type'] in ['function', 'method']:
                     stats['total_functions'] += 1
-                elif symbol['type'] == 'class':
+                elif symbol['type'] in ['class', 'interface']:
                     stats['total_classes'] += 1
             
             language = file_data.get('language')
@@ -71,8 +73,8 @@ class CodeStatisticsAnalyzer:
         
         stats['languages'] = dict(stats['languages'])
         
-        # 统计 API 端点
-        api_stats = self.count_api_endpoints(analyzed_files)
+        # 统计 API 端点（传递 repo_path 以支持 LLM 增强）
+        api_stats = self.count_api_endpoints(analyzed_files, repo_path=repo_path)
         stats['api_endpoints'].update(api_stats)
         
         # 统计数据库表
@@ -83,12 +85,14 @@ class CodeStatisticsAnalyzer:
         
         return stats
     
-    def count_api_endpoints(self, analyzed_files: List[Dict]) -> Dict:
-        """统计 API 端点数量"""
+    def count_api_endpoints(self, analyzed_files: List[Dict], repo_path: str = None) -> Dict:
+        """统计 API 端点数量（支持 LLM 增强）"""
         frontend_count = 0
         backend_count = 0
         frontend_files = []
+        backend_files_checked = []
         
+        # 第一轮：规则检测
         for file_data in analyzed_files:
             file_path = file_data.get('file_path', '')
             language = file_data.get('language', '')
@@ -101,9 +105,16 @@ class CodeStatisticsAnalyzer:
             if self._is_backend_api_file(file_path, language):
                 count = self._count_backend_endpoints_precise(file_data)
                 backend_count += count
+                backend_files_checked.append((file_path, language, count))
+        
+        # 注意：LLM 增强检测在 extract_architecture_details() 中进行
+        # 如果规则检测结果为0，可以在调用 extract_architecture_details() 后更新统计信息
         
         if frontend_files:
             logger.info(f"检测到 {len(frontend_files)} 个前端路由文件，总计 {frontend_count} 个路由")
+        
+        if backend_files_checked:
+            logger.debug(f"规则检测检查了 {len(backend_files_checked)} 个后端文件，发现 {backend_count} 个端点")
         
         logger.info(f"API 统计完成 - 前端: {frontend_count}, 后端: {backend_count}")
         return {
@@ -190,12 +201,19 @@ class CodeStatisticsAnalyzer:
         file_path_normalized = file_path.replace('\\', '/')
         file_path_lower = file_path_normalized.lower()
         
+        # 后端 API 文件关键词（扩展：包含 handler, service 等）
+        backend_keywords = [
+            'api', 'views', 'routes', 'endpoints', 'controller', 
+            'handler', 'handlers',  # 添加 handler 支持
+            'service', 'services'  # 某些框架使用 service 作为 API 层
+        ]
+        
         if language == 'python':
-            return any(keyword in file_path_lower for keyword in ['api', 'views', 'routes', 'endpoints', 'controller'])
+            return any(keyword in file_path_lower for keyword in backend_keywords)
         elif language in ['javascript', 'typescript']:
-            return any(keyword in file_path_lower for keyword in ['controller', 'api', 'routes', 'endpoints'])
+            return any(keyword in file_path_lower for keyword in backend_keywords)
         elif language == 'java':
-            return 'controller' in file_path_lower
+            return any(keyword in file_path_lower for keyword in ['controller', 'handler', 'api'])
         
         return False
     
@@ -862,6 +880,8 @@ class CodeStatisticsAnalyzer:
             ollama_url = getattr(settings, 'OLLAMA_BASE_URL', 'http://localhost:11434')
             code_llm_model = getattr(settings, 'CODE_LLM_MODEL', 'qwen2.5-coder:7b')
             
+            logger.info(f"[LLM调用] 外部服务检测使用模型 {code_llm_model}, prompt 长度: {len(prompt)} 字符")
+            
             response = requests.post(
                 f"{ollama_url}/api/generate",
                 json={
@@ -874,6 +894,8 @@ class CodeStatisticsAnalyzer:
             response.raise_for_status()
             result = response.json()
             content = result.get("response", "").strip()
+            
+            logger.info(f"[LLM调用] 外部服务检测成功，响应长度: {len(content)} 字符")
             
             # 解析 JSON 响应
             import json

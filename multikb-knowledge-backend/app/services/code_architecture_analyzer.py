@@ -7,6 +7,7 @@ import os
 import re
 import ast
 import json
+import hashlib
 from typing import Dict, List, Optional
 from collections import defaultdict
 
@@ -17,14 +18,19 @@ from app.services.code_diagram_generator import CodeDiagramGenerator
 class CodeArchitectureAnalyzer:
     """代码架构分析器"""
     
-    def __init__(self, diagram_generator: Optional[CodeDiagramGenerator] = None):
+    def __init__(self, diagram_generator: Optional[CodeDiagramGenerator] = None, db=None, repository_id: Optional[int] = None):
         """
         初始化架构分析器
         
         Args:
             diagram_generator: 图表生成器（可选，如果提供则使用，否则创建新实例）
+            db: 数据库会话（用于 LLM 缓存）
+            repository_id: 仓库ID（用于 LLM 缓存关联）
         """
         self.diagram_generator = diagram_generator or CodeDiagramGenerator()
+        self.db = db
+        self.repository_id = repository_id
+        self._llm_service = None  # 延迟初始化
     
     def extract_architecture_details(
         self, 
@@ -45,11 +51,35 @@ class CodeArchitectureAnalyzer:
             'three_tier_structure': {}
         }
         
-        # 提取 API 路由文件和详细信息
+        # 提取 API 路由文件和详细信息（增强检测：支持更多路由定义方式）
+        route_patterns = [
+            '/api/', '/routes/', '/endpoints/', '/controllers/', '/handlers/',
+            'router.', 'app.get', 'app.post', 'app.put', 'app.delete', 'app.patch',
+            '@router', '@app.route', '@route', 'fastapi', 'express', 'koa', 'hapi',
+            'flask', 'django.urls', 'spring.web', 'gin.', 'echo.', 'fiber.'
+        ]
+        
         for file_data in analyzed_files:
             path = file_data['file_path']
-            if '/api/' in path or '/routes/' in path or '/endpoints/' in path:
-                if file_data.get('language') in ['python', 'javascript', 'typescript']:
+            path_lower = path.lower()
+            content = file_data.get('content', '').lower()
+            
+            # 检查路径模式
+            is_route_file = any(pattern in path_lower for pattern in route_patterns[:5])
+            
+            # 检查代码内容中的路由定义模式
+            if not is_route_file and content:
+                is_route_file = any(pattern in content[:2000] for pattern in route_patterns[5:])  # 只检查前2000字符
+            
+            # 检查文件名模式
+            if not is_route_file:
+                file_name = os.path.basename(path_lower)
+                route_file_names = ['route', 'router', 'api', 'endpoint', 'controller', 'handler']
+                is_route_file = any(name in file_name for name in route_file_names)
+            
+            if is_route_file:
+                # 检查是否为代码文件（有 symbols 数据表示已解析）
+                if file_data.get('symbols') or file_data.get('language'):
                     route_count = 0
                     if file_data.get('symbols'):
                         for symbol in file_data['symbols']:
@@ -63,14 +93,16 @@ class CodeArchitectureAnalyzer:
                         'language': file_data.get('language', '')
                     })
                     
-                    endpoints = self.extract_api_endpoints_detail(file_data, repo_path)
+                    # 使用 LLM 增强的 API 端点检测
+                    endpoints = self.extract_api_endpoints_with_llm(file_data, repo_path)
                     architecture['api_endpoints_detail'].extend(endpoints)
         
         # 提取服务文件和详细信息
         for file_data in analyzed_files:
             path = file_data['file_path']
             if '/service' in path.lower() or '/services/' in path:
-                if file_data.get('language') in ['python', 'javascript', 'typescript']:
+                # 检查是否为代码文件（有 symbols 数据表示已解析）
+                if file_data.get('symbols') or file_data.get('language'):
                     architecture['service_files'].append({
                         'path': path,
                         'lines': file_data.get('lines', 0),
@@ -85,7 +117,8 @@ class CodeArchitectureAnalyzer:
         for file_data in analyzed_files:
             path = file_data['file_path']
             if '/task' in path.lower() or '/tasks/' in path:
-                if file_data.get('language') in ['python', 'javascript', 'typescript']:
+                # 检查是否为代码文件（有 symbols 数据表示已解析）
+                if file_data.get('symbols') or file_data.get('language'):
                     architecture['task_files'].append({
                         'path': path,
                         'lines': file_data.get('lines', 0),
@@ -133,8 +166,19 @@ class CodeArchitectureAnalyzer:
         
         # 方法2: 从代码文件中直接检测（通过导入语句、配置文件等）
         logger.debug(f"[架构提取] 从代码文件中直接检测存储系统")
-        detected_storage = self._detect_storage_from_code(analyzed_files)
+        detected_storage = self._detect_storage_from_code(analyzed_files, repo_path)
         logger.debug(f"[架构提取] 从代码中检测到 {len(detected_storage)} 个存储系统: {[s.get('name') for s in detected_storage]}")
+        
+        # 方法3: 使用 LLM 增强检测（如果检测结果较少）
+        if len(detected_storage) < 2:
+            logger.info(f"[架构提取] 存储系统检测结果较少 ({len(detected_storage)} 个)，使用 LLM 增强检测")
+            llm_storage = self.detect_storage_systems_with_llm(analyzed_files, repo_path)
+            for storage in llm_storage:
+                # 避免重复添加
+                if not any(s.get('name') == storage.get('name') for s in detected_storage):
+                    detected_storage.append(storage)
+                    logger.info(f"[架构提取] ✅ LLM 补充检测到存储系统: {storage.get('name')}")
+        
         for storage in detected_storage:
             # 避免重复添加
             if not any(s.get('name') == storage.get('name') for s in architecture['storage_systems']):
@@ -162,12 +206,13 @@ class CodeArchitectureAnalyzer:
         
         return architecture
     
-    def _detect_storage_from_code(self, analyzed_files: List[Dict]) -> List[Dict]:
+    def _detect_storage_from_code(self, analyzed_files: List[Dict], repo_path: Optional[str] = None) -> List[Dict]:
         """
         从代码文件中直接检测存储系统（通过导入语句、配置文件等）
         
         Args:
-            analyzed_files: 已分析的文件列表
+            analyzed_files: 已分析的文件列表（file_path 可能是相对路径）
+            repo_path: 仓库本地路径（用于构建完整文件路径）
             
         Returns:
             检测到的存储系统列表
@@ -204,17 +249,30 @@ class CodeArchitectureAnalyzer:
         files_with_content = 0
         files_without_content = 0
         
+        # 使用传入的 repo_path 来构建完整路径（如果 file_path 是相对路径）
+        repo_path_for_storage = repo_path
+        
         for file_data in analyzed_files:
             file_path = file_data.get('file_path', '')
             content = file_data.get('content', '')
+            
+            # 构建完整路径（如果 file_path 是相对路径）
+            full_path = file_path
+            if not os.path.isabs(file_path) and repo_path_for_storage:
+                full_path = os.path.join(repo_path_for_storage, file_path)
+            elif not os.path.isabs(file_path):
+                # 如果无法确定 repo_path，尝试使用 file_path 本身
+                full_path = file_path
             
             # 如果没有 content，尝试从文件读取
             if not content:
                 files_without_content += 1
                 # 尝试读取文件内容（只读取前1000行，避免内存问题）
                 try:
-                    if os.path.exists(file_path):
-                        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    # 先尝试完整路径，再尝试相对路径
+                    read_path = full_path if os.path.exists(full_path) else file_path
+                    if os.path.exists(read_path):
+                        with open(read_path, 'r', encoding='utf-8', errors='ignore') as f:
                             lines = f.readlines()[:1000]  # 只读取前1000行
                             content = ''.join(lines)
                             files_with_content += 1
@@ -245,7 +303,10 @@ class CodeArchitectureAnalyzer:
                             break
             
             # 检查配置文件内容
-            if any(ext in file_path.lower() for ext in ['.env', 'config', 'settings', 'database']):
+            file_lower = file_path.lower()
+            is_config_file = any(ext in file_lower for ext in ['.env', 'config', 'settings', 'database', 'package.json', 'requirements.txt', 'pom.xml', 'build.gradle', 'composer.json', 'gemfile', 'cargo.toml', 'go.mod'])
+            
+            if is_config_file:
                 for db_name, patterns in config_patterns.items():
                     for pattern in patterns:
                         if pattern.lower() in content.lower():
@@ -261,8 +322,387 @@ class CodeArchitectureAnalyzer:
                                 })
                                 logger.info(f"[架构提取] 🔍   从配置文件检测到: {db_name} (文件: {file_path}, 模式: {pattern})")
                                 break
+                
+                # 额外检查：从 package.json, requirements.txt 等依赖文件中检测
+                if 'package.json' in file_lower or 'package-lock.json' in file_lower:
+                    # Node.js 项目，检查数据库驱动
+                    npm_db_patterns = {
+                        'PostgreSQL': ['pg', 'postgres', 'postgresql', 'sequelize', 'typeorm'],
+                        'MySQL': ['mysql', 'mysql2', 'sequelize', 'typeorm'],
+                        'SQLite': ['sqlite3', 'better-sqlite3', 'sequelize', 'typeorm'],
+                        'MongoDB': ['mongodb', 'mongoose'],
+                        'Redis': ['redis', 'ioredis', 'node-redis'],
+                        'Elasticsearch': ['elasticsearch', '@elastic/elasticsearch'],
+                    }
+                    for db_name, patterns in npm_db_patterns.items():
+                        for pattern in patterns:
+                            if f'"{pattern}"' in content or f"'{pattern}'" in content or f'`{pattern}`' in content:
+                                if db_name not in detected_names:
+                                    detected_names.add(db_name)
+                                    storage_type = '数据库' if db_name not in ['Redis'] else '缓存'
+                                    storage_systems.append({
+                                        'name': db_name,
+                                        'type': storage_type,
+                                        'count': 1,
+                                        'source': 'package.json',
+                                        'file': file_path
+                                    })
+                                    logger.info(f"[架构提取] 🔍   从 package.json 检测到: {db_name} (模式: {pattern})")
+                                    break
+                
+                elif 'requirements.txt' in file_lower or 'pyproject.toml' in file_lower or 'setup.py' in file_lower:
+                    # Python 项目，检查数据库驱动
+                    python_db_patterns = {
+                        'PostgreSQL': ['psycopg2', 'psycopg', 'asyncpg', 'sqlalchemy'],
+                        'MySQL': ['pymysql', 'mysql-connector', 'mysqlclient', 'sqlalchemy'],
+                        'SQLite': ['sqlite3'],
+                        'MongoDB': ['pymongo', 'motor', 'mongoengine'],
+                        'Redis': ['redis', 'hiredis'],
+                        'Elasticsearch': ['elasticsearch'],
+                    }
+                    for db_name, patterns in python_db_patterns.items():
+                        for pattern in patterns:
+                            if pattern.lower() in content.lower():
+                                if db_name not in detected_names:
+                                    detected_names.add(db_name)
+                                    storage_type = '数据库' if db_name not in ['Redis'] else '缓存'
+                                    storage_systems.append({
+                                        'name': db_name,
+                                        'type': storage_type,
+                                        'count': 1,
+                                        'source': 'requirements.txt',
+                                        'file': file_path
+                                    })
+                                    logger.info(f"[架构提取] 🔍   从依赖文件检测到: {db_name} (模式: {pattern})")
+                                    break
         
         logger.debug(f"[架构提取] 代码检测完成: 有内容={files_with_content}, 无内容={files_without_content}, 存储系统={len(storage_systems)}")
+        return storage_systems
+    
+    def _parse_dependency_files(self, repo_path: str) -> Dict:
+        """解析依赖文件"""
+        dependencies = {}
+        
+        # Python
+        req_file = os.path.join(repo_path, 'requirements.txt')
+        if os.path.exists(req_file):
+            try:
+                with open(req_file, 'r', encoding='utf-8', errors='ignore') as f:
+                    dependencies['requirements.txt'] = f.read()[:2000]  # 限制大小
+            except:
+                pass
+        
+        # Node.js
+        package_file = os.path.join(repo_path, 'package.json')
+        if os.path.exists(package_file):
+            try:
+                with open(package_file, 'r', encoding='utf-8', errors='ignore') as f:
+                    dependencies['package.json'] = f.read()[:2000]
+            except:
+                pass
+        
+        # Java
+        pom_file = os.path.join(repo_path, 'pom.xml')
+        if os.path.exists(pom_file):
+            try:
+                with open(pom_file, 'r', encoding='utf-8', errors='ignore') as f:
+                    dependencies['pom.xml'] = f.read()[:3000]
+            except:
+                pass
+        
+        return dependencies
+    
+    def _extract_config_files(self, repo_path: str, max_size: int = 5000) -> Dict:
+        """提取配置文件内容"""
+        config_files = {}
+        config_patterns = ['.env', 'config', 'settings', 'application.properties', 'application.yml']
+        
+        for root, dirs, files in os.walk(repo_path):
+            # 跳过忽略的目录
+            dirs[:] = [d for d in dirs if d not in ['.git', 'node_modules', '__pycache__', 'venv', '.venv']]
+            
+            for file in files:
+                if any(pattern in file.lower() for pattern in config_patterns):
+                    file_path = os.path.join(root, file)
+                    try:
+                        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            content = f.read()[:max_size]
+                            rel_path = os.path.relpath(file_path, repo_path)
+                            config_files[rel_path] = content
+                    except:
+                        pass
+        
+        return config_files
+    
+    def detect_storage_systems_with_llm(self, analyzed_files: List[Dict], repo_path: str) -> List[Dict]:
+        """
+        使用 LLM 增强存储系统检测
+        
+        策略:
+        1. 先使用规则检测（快速）
+        2. 如果检测结果较少，使用 LLM 分析依赖和配置
+        3. 利用 qwen3-coder 的长上下文能力分析多个文件
+        """
+        # 1. 规则检测（现有逻辑）
+        storage_systems = self._detect_storage_from_code(analyzed_files, repo_path)
+        
+        # 2. 如果检测结果较少，使用 LLM 补充
+        if len(storage_systems) >= 2:
+            return storage_systems
+        
+        try:
+            dependencies = self._parse_dependency_files(repo_path)
+            
+            # 提取配置文件内容（限制大小）
+            config_files = self._extract_config_files(repo_path, max_size=5000)
+            
+            # 提取关键代码文件中的导入语句（前 100 个文件）
+            import_statements = []
+            for file_data in analyzed_files[:100]:
+                for imp in file_data.get('imports', []):
+                    module = imp.get('module', '')
+                    if any(kw in module.lower() for kw in ['db', 'database', 'cache', 'redis', 'mq', 'queue', 'storage']):
+                        import_statements.append({
+                            'file': file_data.get('file_path', ''),
+                            'import': module
+                        })
+            
+            # 3. 使用 LLM 分析
+            prompt = f"""基于以下项目依赖、配置和导入语句，识别所有使用的存储系统（数据库、缓存、消息队列等）。
+
+依赖包:
+{json.dumps(dependencies, ensure_ascii=False, indent=2)}
+
+配置文件内容:
+{json.dumps(config_files, ensure_ascii=False, indent=2)}
+
+关键导入语句:
+{json.dumps(import_statements[:50], ensure_ascii=False, indent=2)}
+
+请识别：
+1. 数据库（MySQL、PostgreSQL、MongoDB、SQLite、Redis、InfluxDB、TimescaleDB 等）
+2. 缓存系统（Redis、Memcached、Hazelcast 等）
+3. 消息队列（RabbitMQ、Kafka、NATS、Pulsar、Celery 等）
+4. 搜索引擎（Elasticsearch、OpenSearch、Solr、Meilisearch 等）
+5. 对象存储（S3、MinIO、OSS、Azure Blob、GCS 等）
+6. 时序数据库（InfluxDB、TimescaleDB、Prometheus 等）
+7. 图数据库（Neo4j、NebulaGraph、ArangoDB 等）
+
+返回 JSON 格式：
+{{
+  "storage_systems": [
+    {{
+      "name": "MySQL",
+      "type": "数据库",
+      "evidence": "检测到 pymysql 依赖和 DATABASE_URL 配置",
+      "confidence": 0.9
+    }}
+  ]
+}}
+
+注意：
+- 只返回有明确证据的存储系统
+- confidence 表示置信度（0-1）
+- evidence 说明检测依据
+"""
+            
+            # 优先使用 Function Calling（更稳定）
+            llm_service = self._get_llm_service()
+            cache_key = f"storage_systems:{repo_path}:{hashlib.md5(str(dependencies).encode()).hexdigest()[:16]}"
+            
+            # 尝试使用 Function Calling
+            try:
+                from app.services.llm_tools_definitions import STORAGE_SYSTEMS_TOOL
+                
+                # 限制 JSON 数据的大小，确保 prompt < 8K（为 Function Calling 预留空间）
+                # 注意：不能简单截断，会导致 JSON 不完整，Function Calling 失败
+                MAX_STORAGE_PROMPT_LENGTH = 7500  # 预留 2K 给 prompt 模板和工具定义（更保守）
+                PROMPT_TEMPLATE_LENGTH = 200  # prompt 模板的固定长度
+                MAX_DATA_LENGTH = MAX_STORAGE_PROMPT_LENGTH - PROMPT_TEMPLATE_LENGTH  # 实际可用数据长度
+                
+                # 智能限制各部分大小，确保总和不超过限制
+                # 分配比例：依赖包 40%，配置文件 30%，导入语句 30%
+                max_deps_length = int(MAX_DATA_LENGTH * 0.4)
+                max_config_length = int(MAX_DATA_LENGTH * 0.3)
+                max_imports_length = int(MAX_DATA_LENGTH * 0.3)
+                
+                # 1. 限制依赖包
+                dependencies_str = json.dumps(dependencies, ensure_ascii=False, indent=2)
+                if len(dependencies_str) > max_deps_length:
+                    # 逐步减少依赖包数量，直到符合长度限制
+                    limited_deps = {}
+                    for lang, deps in dependencies.items():
+                        if isinstance(deps, list):
+                            # 从 20 个开始，逐步减少
+                            for count in [20, 15, 10, 5]:
+                                limited_deps[lang] = deps[:count]
+                                test_str = json.dumps(limited_deps, ensure_ascii=False, indent=2)
+                                if len(test_str) <= max_deps_length:
+                                    break
+                        else:
+                            limited_deps[lang] = deps
+                    dependencies_str = json.dumps(limited_deps, ensure_ascii=False, indent=2)
+                    if len(dependencies_str) > max_deps_length:
+                        # 如果还是太长，截断字符串（保留开头）
+                        dependencies_str = dependencies_str[:max_deps_length-10] + "\n  ..."
+                
+                # 2. 限制配置文件
+                config_files_str = json.dumps(config_files, ensure_ascii=False, indent=2)
+                if len(config_files_str) > max_config_length:
+                    # 逐步减少配置文件数量
+                    for count in [5, 3, 2, 1]:
+                        limited_configs = config_files[:count] if isinstance(config_files, list) else config_files
+                        test_str = json.dumps(limited_configs, ensure_ascii=False, indent=2)
+                        if len(test_str) <= max_config_length:
+                            config_files_str = test_str
+                            break
+                    if len(config_files_str) > max_config_length:
+                        config_files_str = config_files_str[:max_config_length-10] + "\n  ..."
+                
+                # 3. 限制导入语句
+                import_statements_str = json.dumps(import_statements[:30], ensure_ascii=False, indent=2)
+                if len(import_statements_str) > max_imports_length:
+                    # 逐步减少导入语句数量
+                    for count in [20, 15, 10, 5]:
+                        test_str = json.dumps(import_statements[:count], ensure_ascii=False, indent=2)
+                        if len(test_str) <= max_imports_length:
+                            import_statements_str = test_str
+                            break
+                    if len(import_statements_str) > max_imports_length:
+                        import_statements_str = import_statements_str[:max_imports_length-10] + "\n  ..."
+                
+                fc_prompt = f"""基于以下项目依赖、配置和导入语句，识别所有使用的存储系统。
+
+依赖包:
+{dependencies_str}
+
+配置文件内容:
+{config_files_str}
+
+关键导入语句:
+{import_statements_str}
+
+请识别：数据库、缓存、消息队列、搜索引擎、对象存储、时序数据库、图数据库等。
+只返回有明确证据的存储系统。"""
+                
+                # 最终检查：如果仍然超过限制，直接使用 prompt-based（不尝试 Function Calling）
+                if len(fc_prompt) > MAX_STORAGE_PROMPT_LENGTH:
+                    logger.warning(f"[存储检测] Prompt 长度 {len(fc_prompt)} 超过 Function Calling 限制 {MAX_STORAGE_PROMPT_LENGTH}，直接使用 prompt-based")
+                    # 跳过 Function Calling，直接使用 prompt-based
+                    raise ValueError("Prompt 过长，跳过 Function Calling")
+                
+                try:
+                    llm_result_dict = llm_service.call_llm_with_function_calling(
+                        prompt=fc_prompt,
+                        tools=[STORAGE_SYSTEMS_TOOL],
+                        cache_key=cache_key,
+                        task_type="storage_systems"  # 指定任务类型，用于优化代码总结
+                    )
+                    
+                    # Function Calling 返回的是字典，直接使用
+                    llm_storage = llm_result_dict.get('storage_systems', [])
+                except ValueError as e:
+                    # Prompt 过长或其他原因导致 Function Calling 不可用，直接使用 prompt-based
+                    if "Prompt 过长" in str(e) or "跳过 Function Calling" in str(e):
+                        logger.info(f"[存储检测] 跳过 Function Calling，直接使用 prompt-based: {e}")
+                        raise  # 重新抛出，让外层 catch 处理
+                    else:
+                        raise  # 其他错误，继续抛出
+                logger.debug(f"[存储检测] Function Calling 检测到 {len(llm_storage)} 个存储系统")
+                
+                # 合并结果（去重，保留置信度高的）
+                existing_names = {s.get('name') for s in storage_systems}
+                for storage in llm_storage:
+                    if storage.get('name') not in existing_names and storage.get('confidence', 0) > 0.6:
+                        storage_systems.append({
+                            'name': storage.get('name'),
+                            'type': storage.get('type', 'unknown'),
+                            'count': 1
+                        })
+                
+                return storage_systems
+                
+            except Exception as e:
+                # 降级到 prompt-based 方式
+                logger.warning(f"[存储检测] Function Calling 失败，降级到 prompt-based: {e}")
+                
+                # 构建 prompt-based 的 prompt（使用完整数据）
+                prompt = f"""基于以下项目依赖、配置和导入语句，识别所有使用的存储系统。
+
+依赖包:
+{json.dumps(dependencies, ensure_ascii=False, indent=2)}
+
+配置文件内容:
+{json.dumps(config_files, ensure_ascii=False, indent=2)}
+
+关键导入语句:
+{json.dumps(import_statements[:50], ensure_ascii=False, indent=2)}
+
+请识别：数据库、缓存、消息队列、搜索引擎、对象存储、时序数据库、图数据库等。
+只返回有明确证据的存储系统。
+
+请以 JSON 格式返回，格式：
+{{
+  "storage_systems": [
+    {{"name": "存储系统名称", "type": "类型", "confidence": 0.8}}
+  ]
+}}"""
+                
+                llm_result = llm_service.call_llm_with_cache(prompt, cache_key=cache_key)
+                
+                # 调试：记录 LLM 原始响应（如果响应异常短）
+                # 区分空结果（正常）和错误响应（异常）
+                if len(llm_result) < 100:
+                    # 尝试解析响应，判断是否是有效的空结果
+                    try:
+                        # 清理 markdown 代码块标记
+                        cleaned_result = llm_result.strip()
+                        if cleaned_result.startswith('```json'):
+                            cleaned_result = cleaned_result[7:]
+                        if cleaned_result.startswith('```'):
+                            cleaned_result = cleaned_result[3:]
+                        if cleaned_result.endswith('```'):
+                            cleaned_result = cleaned_result[:-3]
+                        cleaned_result = cleaned_result.strip()
+                        
+                        parsed = json.loads(cleaned_result)
+                        if isinstance(parsed, dict) and 'storage_systems' in parsed:
+                            if parsed['storage_systems'] == []:
+                                # 这是有效的空结果，说明确实没有检测到存储系统
+                                logger.debug(f"[存储检测] LLM 检测到 0 个存储系统（可能规则检测已找到，或确实没有）")
+                            else:
+                                # 有存储系统但响应很短，可能是截断
+                                logger.warning(f"[存储检测] ⚠️ LLM 响应异常短（仅{len(llm_result)}字符），但包含存储系统")
+                        else:
+                            logger.warning(f"[存储检测] ⚠️ LLM 响应格式异常，响应: {llm_result[:100]}")
+                    except json.JSONDecodeError:
+                        # 无法解析 JSON，可能是错误响应
+                        logger.error(f"[存储检测] ❌ LLM 响应无法解析为 JSON，原始响应: {repr(llm_result)}")
+                    except Exception as e:
+                        logger.warning(f"[存储检测] ⚠️ 解析 LLM 响应时出错: {e}, 响应: {llm_result[:100]}")
+                
+                parsed_result = llm_service.parse_json_response(llm_result)
+                llm_storage = parsed_result.get('storage_systems', [])
+                
+                # 合并结果（去重，保留置信度高的）- 降级到 prompt-based 时才执行
+                existing_names = {s.get('name') for s in storage_systems}
+                for storage in llm_storage:
+                    if storage.get('name') not in existing_names and storage.get('confidence', 0) > 0.6:
+                        storage_systems.append({
+                            'name': storage.get('name'),
+                            'type': storage.get('type', '未知'),
+                            'count': 1,
+                            'source': 'llm',
+                            'confidence': storage.get('confidence', 0.8)
+                        })
+                        existing_names.add(storage.get('name'))
+                
+                logger.info(f"[存储检测] LLM 补充检测到 {len(llm_storage)} 个存储系统")
+                return storage_systems
+        except Exception as e:
+            logger.warning(f"[存储检测] LLM 检测失败: {e}")
+            # 降级：继续使用规则检测的结果
+        
         return storage_systems
     
     def extract_api_endpoints_detail(self, file_data: Dict, repo_path: str) -> List[Dict]:
@@ -354,10 +794,446 @@ class CodeArchitectureAnalyzer:
                                         })
                                         break
                                         
+            elif language in ['javascript', 'typescript']:
+                # 支持 Express, Fastify, Koa 等 Node.js 框架
+                with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                
+                # 使用正则表达式匹配路由定义
+                # Express: app.get('/path', handler), router.get('/path', handler)
+                # Fastify: fastify.get('/path', handler)
+                # Koa: router.get('/path', handler)
+                route_patterns = [
+                    (r'(?:app|router|fastify)\.(get|post|put|delete|patch|options|head)\s*\(\s*["\']([^"\']+)["\']', 'express'),
+                    (r'@(Get|Post|Put|Delete|Patch|Options|Head)\s*\(\s*["\']([^"\']+)["\']', 'nestjs'),
+                    (r'@(get|post|put|delete|patch)\s*\(["\']([^"\']+)["\']', 'decorator'),
+                ]
+                
+                lines = content.split('\n')
+                for i, line in enumerate(lines, 1):
+                    for pattern, framework in route_patterns:
+                        matches = re.finditer(pattern, line, re.IGNORECASE)
+                        for match in matches:
+                            http_method = match.group(1).upper()
+                            route_path = match.group(2)
+                            
+                            # 查找对应的处理函数（下一行或几行内）
+                            handler_name = None
+                            for j in range(i, min(i + 5, len(lines))):
+                                func_match = re.search(r'(?:function|const|async\s+function)\s+(\w+)|(\w+)\s*[:=]\s*(?:async\s*)?\(', lines[j])
+                                if func_match:
+                                    handler_name = func_match.group(1) or func_match.group(2)
+                                    break
+                            
+                            endpoints.append({
+                                'method': http_method,
+                                'path': route_path,
+                                'function_name': handler_name or 'anonymous',
+                                'parameters': [],
+                                'docstring': '',
+                                'line': i,
+                                'file_path': file_path,
+                                'framework': framework
+                            })
+                            break  # 每行只匹配一个模式，避免重复
+                        if endpoints and endpoints[-1].get('line') == i:
+                            break  # 如果已经匹配到，跳出模式循环
+                            
         except Exception as e:
             logger.warning(f"提取 API 端点详情失败: {file_path}, {e}")
         
         return endpoints
+    
+    def _get_llm_service(self):
+        """获取 LLM 增强服务（延迟初始化）"""
+        if self._llm_service is None:
+            from app.services.llm_enhancement_service import LLMEnhancementService
+            self._llm_service = LLMEnhancementService(db=self.db, repository_id=self.repository_id)
+        return self._llm_service
+    
+    def _looks_like_route_file(self, file_path: str, file_data: Dict) -> bool:
+        """判断文件是否看起来像路由文件"""
+        path_lower = file_path.lower()
+        route_keywords = ['route', 'api', 'endpoint', 'controller', 'handler', 'view']
+        return any(kw in path_lower for kw in route_keywords)
+    
+    def extract_api_endpoints_with_llm(self, file_data: Dict, repo_path: str) -> List[Dict]:
+        """
+        使用 LLM 增强 API 端点检测
+        
+        策略:
+        1. 先使用规则检测（快速）
+        2. 如果检测结果为空或较少，使用 LLM 分析文件内容
+        3. LLM 识别非标准路由定义方式
+        4. 利用 qwen3-coder 的长上下文能力（256K tokens）
+        """
+        # 1. 规则检测（现有逻辑）
+        endpoints = self.extract_api_endpoints_detail(file_data, repo_path)
+        
+        # 2. 如果检测为空或较少，使用 LLM 补充
+        # 条件：检测结果为空，或者文件看起来像路由文件但检测结果很少
+        file_path = file_data.get('file_path', '')
+        should_use_llm = (
+            not endpoints or 
+            (len(endpoints) < 2 and self._looks_like_route_file(file_path, file_data))
+        )
+        
+        if not should_use_llm:
+            return endpoints
+        
+        full_path = os.path.join(repo_path, file_path)
+        
+        if not os.path.exists(full_path):
+            return endpoints
+        
+        try:
+            with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            
+            # Function Calling 的字符数限制（预留 1K 给 prompt 模板）
+            # 注意：10K 字符是临界点，降低到 8.5K 更安全
+            MAX_CHARS_FOR_FUNCTION_CALLING = 8500  # 9.5K - 1K 预留（更保守）
+            
+            # ========== 旧的行数限制逻辑已注释（不再使用） ==========
+            # qwen3-coder 支持 256K tokens 上下文，但 Function Calling 有 10K 字符限制
+            # 对于大文件（> 8.5K 字符），现在使用 ReAct Agent 处理
+            # 对于小文件（<= 8.5K 字符），直接使用完整内容
+            # lines = content.split('\n')
+            # max_lines = 6000  # 旧的行数限制，已不再使用
+            
+            # 优先使用 Function Calling（更稳定）
+            llm_service = self._get_llm_service()
+            
+            # ========== 新策略：使用文件级 ReAct Agent 处理大文件 ==========
+            # 策略：先检查字符数（针对 Function Calling），再检查行数（针对 prompt-based）
+            if len(content) > MAX_CHARS_FOR_FUNCTION_CALLING:
+                # 文件字符数超过 Function Calling 限制：使用文件级 ReAct Agent
+                logger.info(f"[API检测] 文件字符数 {len(content)} 超过 Function Calling 限制 {MAX_CHARS_FOR_FUNCTION_CALLING}，使用文件级 ReAct Agent: {file_path}")
+                
+                try:
+                    from app.services.file_level_react_agent import FileLevelReActAgent
+                    
+                    # 创建文件级 ReAct Agent
+                    file_agent = FileLevelReActAgent(
+                        repo_path=repo_path,
+                        task_type="api_endpoints",
+                        max_iterations=3,
+                        llm_service=llm_service
+                    )
+                    
+                    # 执行 ReAct 分析
+                    react_result = file_agent.analyze(file_path)
+                    
+                    if react_result.get("success"):
+                        llm_endpoints = react_result.get("extracted_results", [])
+                        confidence = react_result.get("confidence", 0.0)
+                        iterations = react_result.get("iterations", 1)
+                        
+                        logger.info(f"[API检测] ReAct Agent 完成: 迭代 {iterations} 次, 提取 {len(llm_endpoints)} 个端点, 置信度 {confidence:.2f}")
+                        
+                        # 合并结果（去重）
+                        existing_paths = {(e.get('method'), e.get('path')) for e in endpoints}
+                        for ep in llm_endpoints:
+                            key = (ep.get('method'), ep.get('path'))
+                            if key not in existing_paths:
+                                endpoints.append({
+                                    'method': ep.get('method', ''),
+                                    'path': ep.get('path', ''),
+                                    'function_name': ep.get('function_name', ''),
+                                    'parameters': ep.get('parameters', []),
+                                    'docstring': ep.get('description', ''),
+                                    'line': ep.get('line', 0),
+                                    'file_path': file_path
+                                })
+                                existing_paths.add(key)
+                        
+                        return endpoints
+                    else:
+                        error_msg = react_result.get('error', '未知错误')
+                        logger.warning(f"[API检测] ❌ ReAct Agent 失败: {error_msg}，开始降级策略")
+                        # 中期优化：改进降级策略（二次降级，分块处理）
+                        sample_content = self._fallback_strategy(file_path, content, llm_service, repo_path)
+                        
+                except Exception as e:
+                    logger.error(f"[API检测] ❌ ReAct Agent 初始化失败: {e}，开始降级策略", exc_info=True)
+                    # 中期优化：改进降级策略（二次降级，分块处理）
+                    sample_content = self._fallback_strategy(file_path, content, llm_service, repo_path)
+                    
+                    # ========== 旧代码已注释（不再使用智能采样） ==========
+                    # # 降级到智能采样（旧方式，已废弃）
+                    # sample_content = llm_service._extract_api_related_code(content, MAX_CHARS_FOR_FUNCTION_CALLING)
+                    # logger.info(f"[API检测] 智能采样完成: {len(content)} -> {len(sample_content)} 字符")
+            # ========== 旧的行数采样逻辑已注释（不再使用） ==========
+            # 注意：如果文件字符数未超过 8.5K，但行数很多，现在直接使用完整内容
+            # 因为 qwen3-coder 支持 256K tokens 上下文，可以处理大文件
+            # elif len(lines) > max_lines:
+            #     # 超大文件（行数多但字符数未超限）：保留开头、中间关键部分、结尾
+            #     head_lines = 2000  # 前 2000 行
+            #     tail_lines = 2000  # 后 2000 行
+            #     middle_sample = 2000  # 中间采样 2000 行
+            #     
+            #     # 从中间均匀采样
+            #     middle_indices = range(
+            #         head_lines, 
+            #         len(lines) - tail_lines, 
+            #         max(1, (len(lines) - head_lines - tail_lines) // middle_sample)
+            #     )
+            #     middle_lines = [lines[i] for i in middle_indices[:middle_sample]]
+            #     
+            #     sample_content = '\n'.join(
+            #         lines[:head_lines] + 
+            #         [f'\n# ... (省略中间 {len(lines) - head_lines - tail_lines - len(middle_lines)} 行) ...\n'] + 
+            #         middle_lines +
+            #         [f'\n# ... (省略中间部分) ...\n'] + 
+            #         lines[-tail_lines:]
+            #     )
+            #     logger.info(f"[API检测] 文件过大 ({len(lines)} 行)，采样分析 (前{head_lines}+中{len(middle_lines)}+后{tail_lines}行): {file_path}")
+            else:
+                # 文件大小合适（字符数 <= 8.5K）：直接使用完整文件
+                sample_content = content
+                # 计算行数用于日志（不再用于采样决策）
+                lines = content.split('\n')
+                logger.debug(f"[API检测] 分析完整文件 ({len(lines)} 行, {len(content)} 字符): {file_path}")
+            
+            # ========== 以下代码仅用于小文件（< 8.5K 字符）或 ReAct Agent 失败后的降级 ==========
+            # 注意：大文件（> 8.5K 字符）应该使用 ReAct Agent（上面的逻辑），不应该执行到这里
+            # 如果执行到这里，说明：
+            #   1. 文件较小（<= 8.5K 字符）：直接使用 Function Calling
+            #   2. ReAct Agent 失败：降级到 prompt-based（使用完整内容）
+            
+            cache_key = f"api_endpoints:{file_path}:{hashlib.md5(content.encode()).hexdigest()[:16]}"
+            
+            # ========== Function Calling 逻辑（保留用于小文件和降级场景） ==========
+            # 注意：此逻辑仅用于小文件（<= 8.5K 字符）或 ReAct Agent 失败后的降级
+            # 大文件（> 8.5K 字符）应该使用 ReAct Agent（上面的逻辑），不应该执行到这里
+            # 尝试使用 Function Calling（仅适用于小文件或降级场景）
+            try:
+                from app.services.llm_tools_definitions import API_ENDPOINTS_TOOL
+                
+                prompt = f"""分析以下代码文件，识别所有 API 端点（HTTP 路由）。
+
+文件路径: {file_path}
+代码内容:
+```python
+{sample_content}
+```
+
+请识别所有 HTTP 端点（GET、POST、PUT、DELETE、PATCH 等）。
+支持 FastAPI、Flask、Django、Gradio、Streamlit、Tornado、Sanic 等框架。
+如果文件不是路由文件，返回空数组。"""
+                
+                llm_result_dict = llm_service.call_llm_with_function_calling(
+                    prompt=prompt,
+                    tools=[API_ENDPOINTS_TOOL],
+                    cache_key=cache_key,
+                    task_type="api_endpoints"  # 指定任务类型，用于优化代码总结
+                )
+                
+                # Function Calling 返回的是字典，直接使用
+                llm_endpoints = llm_result_dict.get('endpoints', [])
+                logger.debug(f"[API检测] Function Calling 检测到 {len(llm_endpoints)} 个端点: {file_path}")
+                
+                # 合并结果（去重）
+                existing_paths = {(e.get('method'), e.get('path')) for e in endpoints}
+                for ep in llm_endpoints:
+                    key = (ep.get('method'), ep.get('path'))
+                    if key not in existing_paths:
+                        # 确保格式一致
+                        endpoints.append({
+                            'method': ep.get('method', ''),
+                            'path': ep.get('path', ''),
+                            'function_name': ep.get('function_name', ''),
+                            'parameters': ep.get('parameters', []),
+                            'docstring': ep.get('description', ''),
+                            'line': ep.get('line', 0),
+                            'file_path': file_path
+                        })
+                
+                return endpoints
+                
+            except Exception as e:
+                # 降级到 prompt-based 方式
+                logger.warning(f"[API检测] Function Calling 失败，降级到 prompt-based: {e}")
+                
+                prompt = f"""分析以下代码文件，识别所有 API 端点（HTTP 路由）。
+
+文件路径: {file_path}
+代码内容:
+```python
+{sample_content}
+```
+
+请识别：
+1. 所有 HTTP 端点（GET、POST、PUT、DELETE、PATCH 等）
+2. 路由路径（完整路径，包括路径参数）
+3. HTTP 方法
+4. 处理函数名
+5. 行号（如果可能）
+
+返回 JSON 格式：
+{{
+  "endpoints": [
+    {{
+      "method": "GET",
+      "path": "/api/users",
+      "function_name": "get_users",
+      "line": 10,
+      "description": "获取用户列表"
+    }}
+  ]
+}}
+
+注意：
+- 支持 FastAPI、Flask、Django、Gradio、Streamlit、Tornado、Sanic 等框架
+- 支持装饰器路由、函数式路由、类视图路由
+- 支持配置文件定义的路由
+- 支持动态路由（路径参数）
+- 如果文件不是路由文件，返回空数组
+"""
+                
+                llm_result = llm_service.call_llm_with_cache(
+                    prompt, 
+                    cache_key=cache_key
+                )
+                
+                # 调试：记录 LLM 原始响应（如果响应异常短）
+                # 区分空结果（正常）和错误响应（异常）
+                if len(llm_result) < 100:
+                    # 尝试解析响应，判断是否是有效的空结果
+                    try:
+                        # 清理 markdown 代码块标记
+                        cleaned_result = llm_result.strip()
+                        if cleaned_result.startswith('```json'):
+                            cleaned_result = cleaned_result[7:]
+                        if cleaned_result.startswith('```'):
+                            cleaned_result = cleaned_result[3:]
+                        if cleaned_result.endswith('```'):
+                            cleaned_result = cleaned_result[:-3]
+                        cleaned_result = cleaned_result.strip()
+                        
+                        parsed = json.loads(cleaned_result)
+                        if isinstance(parsed, dict) and 'endpoints' in parsed:
+                            if parsed['endpoints'] == []:
+                                # 这是有效的空结果，说明文件确实没有端点
+                                logger.debug(f"[API检测] LLM 检测到 0 个端点（文件确实没有端点）: {file_path}")
+                            else:
+                                # 有端点但响应很短，可能是截断
+                                logger.warning(f"[API检测] ⚠️ LLM 响应异常短（仅{len(llm_result)}字符），但包含端点: {file_path}")
+                        else:
+                            logger.warning(f"[API检测] ⚠️ LLM 响应格式异常: {file_path}, 响应: {llm_result[:100]}")
+                    except json.JSONDecodeError:
+                        # 无法解析 JSON，可能是错误响应
+                        logger.error(f"[API检测] ❌ LLM 响应无法解析为 JSON: {file_path}, 原始响应: {repr(llm_result)}")
+                    except Exception as e:
+                        logger.warning(f"[API检测] ⚠️ 解析 LLM 响应时出错: {file_path}, 错误: {e}, 响应: {llm_result[:100]}")
+                
+                parsed_result = llm_service.parse_json_response(llm_result)
+                llm_endpoints = parsed_result.get('endpoints', [])
+                
+                # 合并结果（去重）- 降级到 prompt-based 时才执行
+                existing_paths = {(e.get('method'), e.get('path')) for e in endpoints}
+                for ep in llm_endpoints:
+                    key = (ep.get('method'), ep.get('path'))
+                    if key not in existing_paths:
+                        # 确保格式一致
+                        endpoints.append({
+                            'method': ep.get('method', ''),
+                            'path': ep.get('path', ''),
+                            'function_name': ep.get('function_name', ''),
+                            'parameters': ep.get('parameters', []),
+                            'docstring': ep.get('description', ''),
+                            'line': ep.get('line', 0),
+                            'file_path': file_path
+                        })
+                        existing_paths.add(key)
+                
+                return endpoints
+        except Exception as e:
+            logger.warning(f"[API检测] LLM 检测失败: {file_path}, 错误: {e}")
+            # 降级：继续使用规则检测的结果
+        
+        return endpoints
+    
+    def _fallback_strategy(self, file_path: str, content: str, llm_service, repo_path: str) -> str:
+        """
+        中期优化：改进降级策略（二次降级，智能采样）
+        
+        策略：
+        1. 如果内容 <= 20K 字符：直接使用完整内容（prompt-based）
+        2. 如果内容 > 20K 字符：使用智能采样（提取 API 相关代码）
+        3. 如果智能采样失败或效果不理想，使用固定策略作为最后手段
+        """
+        MAX_PROMPT_LENGTH = 20000  # prompt-based 的限制（比 Function Calling 宽松）
+        
+        content_size = len(content)
+        logger.info(f"[API检测] 降级策略: 文件大小 {content_size} 字符")
+        
+        if content_size <= MAX_PROMPT_LENGTH:
+            logger.info(f"[API检测] 降级策略: 使用完整内容 (<= {MAX_PROMPT_LENGTH} 字符)")
+            return content
+        else:
+            logger.warning(f"[API检测] 降级策略: 文件过大 ({content_size} > {MAX_PROMPT_LENGTH})，使用智能采样")
+            
+            # 优化：使用智能采样（提取 API 相关代码）
+            try:
+                # 使用 LLM 服务的智能采样方法
+                sampled_content = llm_service._extract_api_related_code(content, MAX_PROMPT_LENGTH)
+                sampled_size = len(sampled_content)
+                compression_ratio = sampled_size / content_size if content_size > 0 else 0
+                
+                # 检查采样效果
+                if sampled_size <= MAX_PROMPT_LENGTH and compression_ratio > 0.3:  # 至少保留 30% 的内容
+                    logger.info(f"[API检测] 降级策略: 智能采样成功: {content_size} -> {sampled_size} 字符 (压缩率: {compression_ratio:.2%})")
+                    return sampled_content
+                else:
+                    logger.warning(f"[API检测] 降级策略: 智能采样效果不理想 (压缩率: {compression_ratio:.2%})，使用固定策略")
+            except Exception as e:
+                logger.warning(f"[API检测] 降级策略: 智能采样失败 ({e})，使用固定策略")
+            
+            # 固定策略（作为最后手段）
+            return self._fallback_fixed_strategy(content, MAX_PROMPT_LENGTH)
+    
+    def _fallback_fixed_strategy(self, content: str, max_length: int) -> str:
+        """
+        固定策略分块处理（作为最后手段）
+        
+        保留开头和结尾，中间均匀采样
+        """
+        CHUNK_SIZE = max_length - 1000  # 预留 1K 给 prompt 模板
+        
+        lines = content.split('\n')
+        total_lines = len(lines)
+        
+        # 计算每块的行数
+        head_lines = 200  # 前 200 行
+        tail_lines = 200  # 后 200 行
+        middle_lines_per_chunk = CHUNK_SIZE // 100  # 假设每行平均 100 字符
+        
+        # 从中间均匀采样
+        middle_start = head_lines
+        middle_end = total_lines - tail_lines
+        middle_range = middle_end - middle_start
+        
+        if middle_range > 0:
+            step = max(1, middle_range // middle_lines_per_chunk)
+            middle_indices = range(middle_start, middle_end, step)
+            middle_lines = [lines[i] for i in middle_indices[:middle_lines_per_chunk]]
+        else:
+            middle_lines = []
+        
+        # 组合采样内容
+        sampled_lines = (
+            lines[:head_lines] +
+            [f'\n# ... (省略中间 {middle_range - len(middle_lines)} 行) ...\n'] +
+            middle_lines +
+            [f'\n# ... (省略中间部分) ...\n'] +
+            lines[-tail_lines:]
+        )
+        
+        sample_content = '\n'.join(sampled_lines)
+        logger.info(f"[API检测] 降级策略: 固定策略采样完成: {total_lines} 行 -> {len(sampled_lines)} 行 ({len(sample_content)} 字符)")
+        
+        return sample_content
     
     def extract_service_methods_detail(self, file_data: Dict, repo_path: str) -> List[Dict]:
         """提取服务方法详细信息"""
@@ -647,6 +1523,8 @@ class CodeArchitectureAnalyzer:
 }}
 """
             
+            logger.info(f"[LLM调用] 架构改进建议生成使用模型 {settings.CODE_LLM_MODEL}, prompt 长度: {len(prompt)} 字符")
+            
             response = requests.post(
                 f"{settings.OLLAMA_BASE_URL}/api/generate",
                 json={
@@ -659,6 +1537,8 @@ class CodeArchitectureAnalyzer:
             response.raise_for_status()
             result = response.json()
             content = result.get("response", "").strip()
+            
+            logger.info(f"[LLM调用] 架构改进建议生成成功，响应长度: {len(content)} 字符")
             
             try:
                 json_match = re.search(r'\{.*\}', content, re.DOTALL)
@@ -913,6 +1793,8 @@ class CodeArchitectureAnalyzer:
 """
         
         try:
+            logger.info(f"[LLM调用] 系统架构生成使用模型 {settings.CODE_LLM_MODEL}, prompt 长度: {len(prompt)} 字符")
+            
             response = requests.post(
                 f"{settings.OLLAMA_BASE_URL}/api/generate",
                 json={
@@ -926,8 +1808,9 @@ class CodeArchitectureAnalyzer:
             result = response.json()
             content = result.get("response", "").strip()
             
+            logger.info(f"[LLM调用] 系统架构生成成功，响应长度: {len(content)} 字符")
+            
             # 记录 LLM 原始响应（详细内容用于调试）
-            logger.debug(f"[系统架构生成] 收到 LLM 原始响应，长度: {len(content)} 字符")
             logger.debug(f"[系统架构生成] LLM 原始响应（前500字符）: {content[:500]}...")
             
             # 步骤2: 清理 JSON 标记
@@ -1303,6 +2186,8 @@ class CodeArchitectureAnalyzer:
 """
         
         try:
+            logger.info(f"[LLM调用] 技术栈生成使用模型 {settings.CODE_LLM_MODEL}, prompt 长度: {len(prompt)} 字符")
+            
             response = requests.post(
                 f"{settings.OLLAMA_BASE_URL}/api/generate",
                 json={
@@ -1315,6 +2200,8 @@ class CodeArchitectureAnalyzer:
             response.raise_for_status()
             result = response.json()
             content = result.get("response", "").strip()
+            
+            logger.info(f"[LLM调用] 技术栈生成成功，响应长度: {len(content)} 字符")
             
             content = content.strip()
             if content.startswith("```json"):
@@ -1382,6 +2269,8 @@ class CodeArchitectureAnalyzer:
 """
         
         try:
+            logger.info(f"[LLM调用] 组件关系生成使用模型 {settings.CODE_LLM_MODEL}, prompt 长度: {len(prompt)} 字符")
+            
             response = requests.post(
                 f"{settings.OLLAMA_BASE_URL}/api/generate",
                 json={
@@ -1394,6 +2283,8 @@ class CodeArchitectureAnalyzer:
             response.raise_for_status()
             result = response.json()
             content = result.get("response", "").strip()
+            
+            logger.info(f"[LLM调用] 组件关系生成成功，响应长度: {len(content)} 字符")
             
             content = content.strip()
             if content.startswith("```json"):
@@ -1467,6 +2358,8 @@ class CodeArchitectureAnalyzer:
 """
         
         try:
+            logger.info(f"[LLM调用] 部署模型生成使用模型 {settings.CODE_LLM_MODEL}, prompt 长度: {len(prompt)} 字符")
+            
             response = requests.post(
                 f"{settings.OLLAMA_BASE_URL}/api/generate",
                 json={
@@ -1479,6 +2372,8 @@ class CodeArchitectureAnalyzer:
             response.raise_for_status()
             result = response.json()
             content = result.get("response", "").strip()
+            
+            logger.info(f"[LLM调用] 部署模型生成成功，响应长度: {len(content)} 字符")
             
             content = content.strip()
             if content.startswith("```json"):
@@ -1606,6 +2501,8 @@ class CodeArchitectureAnalyzer:
 """
         
         try:
+            logger.info(f"[LLM调用] 快速开始指南生成使用模型 {settings.CODE_LLM_MODEL}, prompt 长度: {len(prompt)} 字符")
+            
             response = requests.post(
                 f"{settings.OLLAMA_BASE_URL}/api/generate",
                 json={
@@ -1619,9 +2516,10 @@ class CodeArchitectureAnalyzer:
             result = response.json()
             content = result.get("response", "").strip()
             
+            logger.info(f"[LLM调用] 快速开始指南生成成功，响应长度: {len(content)} 字符")
+            
             # 记录 LLM 原始响应（前500字符，用于调试）
             logger.debug(f"[快速开始指南] LLM 原始响应（前500字符）: {content[:500]}...")
-            logger.info(f"[快速开始指南] LLM 原始响应长度: {len(content)} 字符")
             
             content = content.strip()
             if content.startswith("```json"):
