@@ -10,13 +10,83 @@ import asyncio
 from datetime import datetime, timedelta
 from typing import Dict
 from sqlalchemy import text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, IntegrityError
 
 from app.tasks.celery_app import celery_app
 from app.core.logging import logger
 from app.services.git_service import GitService
 from app.services.code_analyzer_service import CodeAnalyzerService
 from app.services.code_analysis_agent_v2 import CodeAnalysisAgentV2  # V2（基于 Function Calling + Thinking 模型）
+from app.config.settings import settings
+from typing import Optional, List
+
+
+def _resolve_import_to_file_path(
+    module: str, 
+    source_file: str, 
+    all_files: List[str],
+    repo_path: Optional[str] = None
+) -> Optional[str]:
+    """
+    解析导入模块，查找对应的本地文件路径
+    
+    Args:
+        module: 模块名
+        source_file: 源文件路径
+        all_files: 所有文件路径列表
+        repo_path: 仓库路径（可选）
+        
+    Returns:
+        目标文件路径，如果不是本地文件则返回 None
+    """
+    if not module:
+        return None
+    
+    # 跳过外部包（简单启发式）
+    if not module.startswith('.') and not module.startswith('/'):
+        # 如果不包含路径分隔符，可能是外部包
+        if '/' not in module and '\\' not in module:
+            return None
+    
+    # 处理相对导入（Python/TypeScript）
+    if module.startswith('.'):
+        source_dir = os.path.dirname(source_file)
+        # 处理多个点（如 ..module）
+        dots = 0
+        while module.startswith('.'):
+            dots += 1
+            module = module[1:]
+        if dots > 1:
+            for _ in range(dots - 1):
+                source_dir = os.path.dirname(source_dir)
+        
+        # 尝试不同扩展名
+        for ext in ['', '.py', '.js', '.ts', '.jsx', '.tsx']:
+            potential_path = os.path.join(source_dir, module + ext).replace('\\', '/')
+            # 标准化路径
+            potential_path = os.path.normpath(potential_path).replace('\\', '/')
+            # 检查是否在文件列表中
+            for file_path in all_files:
+                if file_path.replace('\\', '/') == potential_path or file_path.replace('\\', '/').endswith(potential_path):
+                    return file_path
+    
+    # 处理绝对路径或相对路径
+    else:
+        # 移除可能的扩展名
+        module_base = module.rsplit('.', 1)[0] if '.' in module else module
+        # 尝试不同扩展名
+        for ext in ['', '.py', '.js', '.ts', '.jsx', '.tsx']:
+            potential_path = (module_base + ext).replace('\\', '/')
+            # 检查是否在文件列表中
+            for file_path in all_files:
+                file_path_normalized = file_path.replace('\\', '/')
+                if file_path_normalized == potential_path or file_path_normalized.endswith('/' + potential_path):
+                    return file_path
+                # 也检查文件名匹配
+                if os.path.basename(file_path_normalized) == os.path.basename(potential_path):
+                    return file_path
+    
+    return None
 
 
 def _save_cache_with_retry(conn, repo_id: int, cache_type: str, cache_key: str, cache_data: str, expires_at: datetime, max_retries: int = 3):
@@ -35,6 +105,7 @@ def _save_cache_with_retry(conn, repo_id: int, cache_type: str, cache_key: str, 
         max_retries: 最大重试次数
     """
     from app.config.database import engine
+    from sqlalchemy.exc import IntegrityError
     
     for attempt in range(max_retries):
         try:
@@ -59,6 +130,16 @@ def _save_cache_with_retry(conn, repo_id: int, cache_type: str, cache_key: str, 
             )
             return  # 成功，退出
             
+        except IntegrityError as e:
+            # 外键约束错误（1452）：仓库不存在
+            error_code = e.orig.args[0] if hasattr(e, 'orig') and hasattr(e.orig, 'args') and len(e.orig.args) > 0 else None
+            if error_code == 1452 and 'foreign key constraint fails' in str(e).lower():
+                logger.warning(f"仓库 {repo_id} 不存在，跳过缓存保存（可能已被删除）")
+                return  # 优雅地失败，不抛出异常
+            else:
+                # 其他完整性错误，直接抛出
+                logger.error(f"保存缓存时发生完整性错误: {e}")
+                raise
         except OperationalError as e:
             error_code = e.orig.args[0] if hasattr(e, 'orig') and hasattr(e.orig, 'args') and len(e.orig.args) > 0 else None
             
@@ -333,15 +414,21 @@ def clone_and_analyze(self, repo_id: int, repo_url: str, branch: str = 'main'):
             logger.info(f"[Task {self.request.id}] ✅ 依赖图缓存保存成功")
             
             # 保存摘要（使用重试机制）
+            # LLM 生成的项目摘要保存到 MySQL: code_analysis_cache 表
+            # 字段: cache_type='summary', cache_key='full', cache_data=JSON格式
             summary_data = {
-                'summary': analysis['summary'],
+                'summary': analysis['summary'],  # LLM 生成的项目摘要
                 'statistics': analysis['statistics']
             }
             summary_json = json.dumps(summary_data)
             summary_size_kb = len(summary_json.encode('utf-8')) / 1024
-            logger.info(f"[Task {self.request.id}] 💾 保存摘要到缓存 (大小: {summary_size_kb:.1f} KB)")
+            summary_length = len(analysis.get('summary', ''))
+            logger.info(f"[Task {self.request.id}] 💾 保存 LLM 摘要到数据库: "
+                       f"表=code_analysis_cache, cache_type=summary, cache_key=full, "
+                       f"repo_id={repo_id}, summary长度={summary_length}字符, 大小={summary_size_kb:.1f}KB")
             _save_cache_with_retry(conn, repo_id, 'summary', 'full', summary_json, expires_at, max_retries=3)
-            logger.info(f"[Task {self.request.id}] ✅ 摘要缓存保存成功")
+            logger.info(f"[Task {self.request.id}] ✅ LLM 摘要已保存到数据库: "
+                       f"repo_id={repo_id}, 表=code_analysis_cache, cache_type=summary")
             
             conn.commit()
             logger.info(f"[Task {self.request.id}] ✅ 所有缓存数据提交成功")
@@ -404,9 +491,38 @@ def clone_and_analyze(self, repo_id: int, repo_url: str, branch: str = 'main'):
             else:
                 logger.warning(f"[Task {self.request.id}] ⚠️ 仓库不存在: repo_id={repo_id}")
             
+            # ========== 重要：先创建仓库节点到 NebulaGraph ==========
+            # 如果启用 NebulaGraph，必须先创建 code_repository 节点，否则文件节点无法通过 contains 边查询
+            if settings.USE_NEBULA_GRAPH and repo:
+                try:
+                    from app.services.nebula_code_service import get_nebula_code_service
+                    nebula_service = get_nebula_code_service(db_session)
+                    
+                    import asyncio
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        # 先同步仓库节点（如果不存在则创建，如果存在则更新）
+                        sync_result = loop.run_until_complete(nebula_service.sync_repository(repo_id))
+                        repo_vid = sync_result.get('repository_vid') if isinstance(sync_result, dict) else sync_result
+                        logger.info(f"[Task {self.request.id}] ✅ 仓库节点已同步到 NebulaGraph: repo_id={repo_id}, vid={repo_vid}")
+                    finally:
+                        loop.close()
+                except Exception as sync_repo_error:
+                    logger.error(f"[Task {self.request.id}] ❌ 同步仓库节点失败: {sync_repo_error}", exc_info=True)
+                    # 不中断流程，但记录错误
+            
             # 批量保存文件
             total_files = len(analysis.get('files', []))
-            logger.info(f"[Task {self.request.id}] 📦 准备保存 {total_files} 个文件到 code_files 表")
+            logger.info(f"[Task {self.request.id}] 📦 准备保存 {total_files} 个文件到 MySQL 和 NebulaGraph")
+            
+            # 检查 NebulaGraph 是否启用
+            if not settings.USE_NEBULA_GRAPH:
+                logger.warning(f"[Task {self.request.id}] ⚠️ NebulaGraph 未启用，将跳过文件节点创建")
+            
+            # 初始化用于创建依赖关系边的数据结构
+            file_path_to_vid_map = {}  # 文件路径 -> VID 映射
+            file_imports_data = []  # 文件导入数据列表
             
             for idx, file_data in enumerate(analysis.get('files', []), 1):
                 try:
@@ -434,58 +550,169 @@ def clone_and_analyze(self, repo_id: int, repo_url: str, branch: str = 'main'):
                     # 统计导入数量
                     imports_count = len(file_data.get('imports', []))
                     
-                    # 保存文件
+                    # ========== 保存到 MySQL 和 NebulaGraph ==========
+                    # 同时保存到 MySQL（用于统计查询）和 NebulaGraph（用于图谱查询）
                     try:
                         file_symbols_count_before = len(file_data.get('symbols', []))
-                        code_file = file_service.create_file(
-                            repository_id=repo_id,
-                            file_path=file_path,
-                            file_name=file_name,
-                            language=language,
-                            lines_of_code=lines,
-                            file_size=file_size,
-                            complexity_score=complexity_score,
-                            symbols_count=file_symbols_count_before,
-                            imports_count=imports_count
-                        )
-                        files_saved += 1
+                        file_vid = None
+                        file_id = None
                         
-                        # 向量化文件并写入 OpenSearch
+                        # 计算内容哈希（如果需要）
+                        content_hash = None
+                        file_content = None
+                        if repo_local_path:
+                            full_path = os.path.join(repo_local_path, file_path)
+                            if os.path.exists(full_path):
+                                try:
+                                    with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                        file_content = f.read()
+                                        import hashlib
+                                        content_hash = hashlib.sha256(file_content.encode('utf-8')).hexdigest()
+                                except Exception:
+                                    pass
+                        
+                        # 1. 先保存到 MySQL（code_files 表）
                         try:
-                            import asyncio
-                            # 获取文件内容
-                            file_content = None
-                            if repo_local_path:
-                                full_path = os.path.join(repo_local_path, file_path)
-                                if os.path.exists(full_path):
-                                    try:
-                                        with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
-                                            file_content = f.read()
-                                    except Exception:
-                                        pass
+                            from app.services.code_file_service import get_code_file_service
+                            file_service = get_code_file_service(db_session)
                             
-                            # 在同步上下文中运行异步函数
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
-                            try:
-                                loop.run_until_complete(
-                                    vectorization_service.vectorize_code_file(
-                                        file_id=code_file.id,
-                                        content=file_content
-                                    )
-                                )
-                                files_vectorized += 1
-                            finally:
-                                loop.close()
-                        except Exception as vectorize_file_error:
-                            file_vectorization_errors += 1
-                            if file_vectorization_errors <= 5:  # 只记录前5个错误
-                                logger.warning(f"[Task {self.request.id}] 向量化文件失败: {file_path}, 错误: {vectorize_file_error}")
-                            # 不中断流程，继续处理下一个文件
+                            code_file = file_service.create_file(
+                                repository_id=repo_id,
+                                file_path=file_path,
+                                file_name=file_name,
+                                file_type=None,  # 可以根据文件扩展名判断
+                                language=language,
+                                content=file_content,  # 传入内容用于计算哈希
+                                lines_of_code=lines,
+                                file_size=file_size,
+                                complexity_score=complexity_score if complexity_score > 0 else None,
+                                symbols_count=file_symbols_count_before,
+                                imports_count=imports_count,
+                                content_hash=content_hash
+                            )
+                            file_id = code_file.id
+                            files_saved += 1  # MySQL 保存成功，计数
+                            logger.debug(f"[Task {self.request.id}] ✅ 文件已保存到 MySQL: {file_path} (ID: {file_id})")
+                        except Exception as mysql_error:
+                            logger.error(f"[Task {self.request.id}] ❌ 保存文件到 MySQL 失败: {file_path}, 错误: {mysql_error}")
+                            # MySQL 保存失败不影响后续流程，但记录错误
+                            file_id = None
                         
-                        # 每10个文件记录一次进度
-                        if files_saved % 10 == 0:
-                            logger.debug(f"[Task {self.request.id}] 📄 已保存 {files_saved}/{total_files} 个文件: {file_name} (符号数={file_symbols_count_before})")
+                        # 2. 保存到 NebulaGraph（如果启用）
+                        if settings.USE_NEBULA_GRAPH:
+                            try:
+                                from app.services.nebula_code_service import get_nebula_code_service
+                                nebula_service = get_nebula_code_service(db_session)
+                                
+                                # 获取知识库ID
+                                repo = db_session.query(CodeRepository).filter(CodeRepository.id == repo_id).first()
+                                knowledge_base_id = repo.knowledge_base_id if repo else None
+                                
+                                # 直接创建到 NebulaGraph（使用基于哈希的 VID）
+                                loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(loop)
+                                try:
+                                    file_vid = loop.run_until_complete(
+                                        nebula_service.create_file_node_direct(
+                                            repository_id=repo_id,
+                                            file_path=file_path,
+                                            file_name=file_name,
+                                            language=language,
+                                            lines_of_code=lines,
+                                            file_size=file_size,
+                                            complexity_score=complexity_score,
+                                            symbols_count=file_symbols_count_before,
+                                            imports_count=imports_count,
+                                            knowledge_base_id=knowledge_base_id,
+                                            content_hash=content_hash
+                                        )
+                                    )
+                                    
+                                    # 创建仓库与文件的包含关系
+                                    repo_vid = f"code_repository_{repo_id}"
+                                    loop.run_until_complete(
+                                        nebula_service._create_contains_edge(
+                                            repo_vid,
+                                            file_vid,
+                                            "repository"
+                                        )
+                                    )
+                                    
+                                    # 构建文件路径到 VID 的映射（用于后续创建依赖关系边）
+                                    file_path_to_vid_map[file_path] = file_vid
+                                    
+                                    # 同时保存文件数据和 imports 信息（用于后续创建依赖边）
+                                    file_imports_data.append({
+                                        'file_path': file_path,
+                                        'file_vid': file_vid,
+                                        'imports': file_data.get('imports', [])
+                                    })
+                                    
+                                    # files_saved 已在 MySQL 保存成功时计数，这里不再重复计数
+                                    # 每200个文件记录一次，减少日志量
+                                    if files_saved % 200 == 0:
+                                        logger.info(f"[Task {self.request.id}] ✅ 已创建 {files_saved}/{total_files} 个文件到 MySQL 和 NebulaGraph")
+                                    
+                                    # 前10个文件记录详细信息（用于调试）
+                                    if files_saved <= 10:
+                                        logger.debug(f"[Task {self.request.id}] 文件节点创建成功: file_path={file_path}, vid={file_vid}")
+                                finally:
+                                    loop.close()
+                                
+                            except Exception as nebula_error:
+                                logger.error(f"[Task {self.request.id}] ❌ 创建文件到 NebulaGraph 失败: {file_path}, 错误: {nebula_error}", exc_info=True)
+                                files_errors += 1
+                                # 如果错误太多，记录详细信息
+                                if files_errors <= 10:
+                                    logger.error(f"[Task {self.request.id}] 文件创建错误详情: file_path={file_path}, language={language}, lines={lines}")
+                        else:
+                            logger.warning(f"[Task {self.request.id}] ⚠️ NebulaGraph 未启用，跳过文件存储: {file_path}")
+                            files_errors += 1
+                        
+                        # 向量化文件并写入 OpenSearch（使用 VID 而不是 MySQL ID）
+                        if settings.USE_NEBULA_GRAPH and 'file_vid' in locals():
+                            try:
+                                import asyncio
+                                # 获取文件内容
+                                file_content = None
+                                if repo_local_path:
+                                    full_path = os.path.join(repo_local_path, file_path)
+                                    if os.path.exists(full_path):
+                                        try:
+                                            with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                                file_content = f.read()
+                                        except Exception:
+                                            pass
+                                
+                                # 在同步上下文中运行异步函数
+                                loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(loop)
+                                try:
+                                    # 使用 VID 向量化（doc_id 使用 file_vid）
+                                    result = loop.run_until_complete(
+                                        vectorization_service.vectorize_code_file_by_vid(
+                                            file_vid=file_vid,
+                                            file_path=file_path,
+                                            repository_id=repo_id,
+                                            knowledge_base_id=knowledge_base_id,
+                                            language=language,
+                                            content=file_content
+                                        )
+                                    )
+                                    # 如果返回 None，表示文件为空或跳过，不算错误
+                                    if result is not None:
+                                        files_vectorized += 1
+                                finally:
+                                    loop.close()
+                            except Exception as vectorize_file_error:
+                                file_vectorization_errors += 1
+                                if file_vectorization_errors <= 5:  # 只记录前5个错误
+                                    logger.warning(f"[Task {self.request.id}] 向量化文件失败: {file_path}, 错误: {vectorize_file_error}")
+                                # 不中断流程，继续处理下一个文件
+                        
+                        # 每200个文件记录一次进度（减少日志频率）
+                        if files_saved % 200 == 0:
+                            logger.info(f"[Task {self.request.id}] 📄 已保存 {files_saved}/{total_files} 个文件 (向量化={files_vectorized}, 符号={symbols_saved})")
                     except Exception as create_file_error:
                         files_errors += 1
                         if files_errors <= 5:
@@ -517,6 +744,10 @@ def clone_and_analyze(self, repo_id: int, repo_url: str, branch: str = 'main'):
                                             qualified_name = f"{cls.get('name', '')}.{symbol_name}"
                                             break
                             
+                            # 截断 qualified_name（MySQL 字段是 VARCHAR(500)）
+                            if qualified_name and len(qualified_name) > 495:
+                                qualified_name = qualified_name[:492] + "..."
+                            
                             # 准备参数和返回值信息
                             parameters = symbol.get('parameters', [])
                             return_type = symbol.get('return_type')
@@ -540,7 +771,19 @@ def clone_and_analyze(self, repo_id: int, repo_url: str, branch: str = 'main'):
                                     signature_parts = [str(p) for p in parameters]
                             
                             signature = f"({', '.join(signature_parts)})" if signature_parts else "()"
+                            
+                            # 处理 return_type：MySQL 字段是 VARCHAR(100)，需要截断
+                            # 先清理换行符和多余空格，然后截断
+                            return_type_clean = None
                             if return_type:
+                                # 移除换行符，压缩空格
+                                return_type_single_line = ' '.join(return_type.replace('\r\n', ' ').replace('\n', ' ').split())
+                                # 截断到 95 字符（留一些余量）
+                                if len(return_type_single_line) > 95:
+                                    return_type_clean = return_type_single_line[:92] + "..."
+                                else:
+                                    return_type_clean = return_type_single_line
+                                # signature 中仍然使用完整信息（signature 字段是 TEXT 类型）
                                 signature += f" -> {return_type}"
                             
                             # 计算符号行数
@@ -549,20 +792,104 @@ def clone_and_analyze(self, repo_id: int, repo_url: str, branch: str = 'main'):
                             # 符号复杂度（如果有）
                             symbol_complexity = symbol.get('complexity', {}).get('cyclomatic', 0) if isinstance(symbol.get('complexity'), dict) else 0
                             
-                            # 保存符号到MySQL（只保存基本信息）
+                            # ========== 保存到 MySQL 和 NebulaGraph ==========
+                            # 同时保存到 MySQL（用于统计查询）和 NebulaGraph（用于图谱查询）
                             try:
-                                code_symbol = symbol_service.create_symbol(
-                                    file_id=code_file.id,
-                                    symbol_name=symbol_name,
-                                    symbol_type=symbol_type,
-                                    qualified_name=qualified_name,
-                                    start_line=start_line,
-                                    end_line=end_line,
-                                    complexity_score=symbol_complexity if symbol_complexity > 0 else None,
-                                    lines_count=lines_count
-                                )
-                                symbols_saved += 1
-                                file_symbols_count += 1
+                                symbol_vid = None
+                                symbol_id = None
+                                
+                                # 1. 先保存到 MySQL（code_symbols 表），需要 file_id
+                                if file_id:  # 确保文件已保存到 MySQL
+                                    try:
+                                        from app.services.code_symbol_service import get_code_symbol_service
+                                        symbol_service = get_code_symbol_service(db_session)
+                                        
+                                        code_symbol = symbol_service.create_symbol(
+                                            file_id=file_id,
+                                            repository_id=repo_id,
+                                            symbol_type=symbol_type,
+                                            symbol_name=symbol_name,
+                                            qualified_name=qualified_name,
+                                            signature=signature,
+                                            start_line=start_line,
+                                            end_line=end_line,
+                                            docstring=symbol.get('docstring', '') if symbol.get('docstring') else None,
+                                            parameters=parameters if parameters else None,
+                                            return_type=return_type_clean,  # 使用截断后的版本
+                                            complexity_score=symbol_complexity if symbol_complexity > 0 else None,
+                                            lines_count=lines_count
+                                        )
+                                        symbol_id = code_symbol.id
+                                        symbols_saved += 1  # MySQL 保存成功，计数
+                                        file_symbols_count += 1
+                                    except Exception as mysql_error:
+                                        logger.warning(f"[Task {self.request.id}] ⚠️ 保存符号到 MySQL 失败: {file_path}:{symbol_name}, 错误: {mysql_error}")
+                                        # MySQL 保存失败不影响后续流程
+                                
+                                # 2. 保存到 NebulaGraph（如果启用）
+                                if settings.USE_NEBULA_GRAPH and file_vid:
+                                    try:
+                                        from app.services.nebula_code_service import get_nebula_code_service
+                                        nebula_service = get_nebula_code_service(db_session)
+                                        
+                                        # 获取知识库ID
+                                        repo = db_session.query(CodeRepository).filter(CodeRepository.id == repo_id).first()
+                                        knowledge_base_id = repo.knowledge_base_id if repo else None
+                                        
+                                        # 直接创建到 NebulaGraph（使用基于哈希的 VID）
+                                        loop = asyncio.new_event_loop()
+                                        asyncio.set_event_loop(loop)
+                                        try:
+                                            symbol_vid = loop.run_until_complete(
+                                                nebula_service.create_symbol_node_direct(
+                                                    repository_id=repo_id,
+                                                    file_path=file_path,
+                                                    symbol_name=symbol_name,
+                                                    symbol_type=symbol_type,
+                                                    qualified_name=qualified_name,
+                                                    start_line=start_line,
+                                                    end_line=end_line,
+                                                    signature=signature,
+                                                    docstring=symbol.get('docstring', '') if symbol.get('docstring') else None,
+                                                    return_type=return_type,
+                                                    complexity_score=symbol_complexity if symbol_complexity > 0 else 0.0,
+                                                    lines_count=lines_count,
+                                                    knowledge_base_id=knowledge_base_id,
+                                                    file_vid=file_vid  # 使用文件 VID 创建包含关系
+                                                )
+                                            )
+                                            
+                                            # symbols_saved 已在 MySQL 保存成功时计数，这里只更新 file_symbols_count（如果尚未更新）
+                                            if not symbol_id:
+                                                symbols_saved += 1
+                                                file_symbols_count += 1
+                                            # 如果 symbol_id 已存在，说明已在 MySQL 保存时计数，这里不再重复
+                                            # 每500个符号记录一次，减少日志量
+                                            if symbols_saved % 500 == 0:
+                                                logger.info(f"[Task {self.request.id}] ✅ 已创建 {symbols_saved} 个符号到 NebulaGraph")
+                                        finally:
+                                            loop.close()
+                                        
+                                    except Exception as nebula_error:
+                                        logger.error(f"[Task {self.request.id}] ❌ 创建符号到 NebulaGraph 失败: {file_path}:{symbol_name}, 错误: {nebula_error}")
+                                        symbols_errors += 1
+                                else:
+                                    # NebulaGraph 未启用或文件未同步，但符号可能已保存到 MySQL
+                                    if not settings.USE_NEBULA_GRAPH:
+                                        # 如果已经保存到 MySQL，不算错误，只计数一次
+                                        if symbol_id:
+                                            symbols_saved += 1
+                                            file_symbols_count += 1
+                                        else:
+                                            symbols_errors += 1
+                                    elif not file_vid:
+                                        logger.warning(f"[Task {self.request.id}] ⚠️ 文件未同步到 NebulaGraph，跳过符号: {symbol_name}")
+                                        if not symbol_id:
+                                            symbols_errors += 1
+                                        else:
+                                            # 文件未同步到 NebulaGraph，但符号已保存到 MySQL，计数
+                                            symbols_saved += 1
+                                            file_symbols_count += 1
                                 
                                 # 立即将详细数据写入OpenSearch
                                 # 获取代码内容（如果需要）
@@ -578,42 +905,43 @@ def clone_and_analyze(self, repo_id: int, repo_url: str, branch: str = 'main'):
                                         except Exception:
                                             pass
                                 
-                                # 直接向量化并写入OpenSearch
-                                try:
-                                    import asyncio
-                                    # 在同步上下文中运行异步函数
-                                    loop = asyncio.new_event_loop()
-                                    asyncio.set_event_loop(loop)
+                                # 直接向量化并写入OpenSearch（使用 VID 而不是 MySQL ID）
+                                if settings.USE_NEBULA_GRAPH and 'symbol_vid' in locals() and 'file_vid' in locals():
                                     try:
-                                        loop.run_until_complete(
-                                            vectorization_service.vectorize_symbol_direct(
-                                                symbol_id=code_symbol.id,
-                                                file_id=code_file.id,
-                                                repository_id=repo_id,
-                                                knowledge_base_id=code_file.knowledge_base_id,
-                                                symbol_name=symbol_name,
-                                                symbol_type=symbol_type,
-                                                qualified_name=qualified_name,
-                                                signature=signature,
-                                                docstring=symbol.get('docstring', '') if symbol.get('docstring') else None,  # 完整docstring，不截断
-                                                parameters=parameters if parameters else None,
-                                                return_type=return_type,
-                                                file_path=file_path,
-                                                start_line=start_line,
-                                                end_line=end_line,
-                                                complexity_score=symbol_complexity if symbol_complexity > 0 else None,
-                                                lines_count=lines_count,
-                                                code_content=code_content
+                                        import asyncio
+                                        # 在同步上下文中运行异步函数
+                                        loop = asyncio.new_event_loop()
+                                        asyncio.set_event_loop(loop)
+                                        try:
+                                            loop.run_until_complete(
+                                                vectorization_service.vectorize_symbol_by_vid(
+                                                    symbol_vid=symbol_vid,
+                                                    file_vid=file_vid,
+                                                    repository_id=repo_id,
+                                                    knowledge_base_id=knowledge_base_id,
+                                                    symbol_name=symbol_name,
+                                                    symbol_type=symbol_type,
+                                                    qualified_name=qualified_name,
+                                                    signature=signature,
+                                                    docstring=symbol.get('docstring', '') if symbol.get('docstring') else None,  # 完整docstring，不截断
+                                                    parameters=parameters if parameters else None,
+                                                    return_type=return_type,
+                                                    file_path=file_path,
+                                                    start_line=start_line,
+                                                    end_line=end_line,
+                                                    complexity_score=symbol_complexity if symbol_complexity > 0 else None,
+                                                    lines_count=lines_count,
+                                                    code_content=code_content
+                                                )
                                             )
-                                        )
-                                        symbols_vectorized += 1
-                                    finally:
-                                        loop.close()
-                                except Exception as vectorize_error:
-                                    vectorization_errors += 1
-                                    if vectorization_errors <= 5:
-                                        logger.warning(f"[Task {self.request.id}] 向量化符号失败: {file_path}:{symbol_name}, 错误: {vectorize_error}")
-                                    # 不中断流程，继续处理下一个符号
+                                            symbols_vectorized += 1
+                                        finally:
+                                            loop.close()
+                                    except Exception as vectorize_error:
+                                        vectorization_errors += 1
+                                        if vectorization_errors <= 5:
+                                            logger.warning(f"[Task {self.request.id}] 向量化符号失败: {file_path}:{symbol_name}, 错误: {vectorize_error}")
+                                        # 不中断流程，继续处理下一个符号
                                 
                             except Exception as create_symbol_error:
                                 symbols_errors += 1
@@ -630,13 +958,19 @@ def clone_and_analyze(self, repo_id: int, repo_url: str, branch: str = 'main'):
                     # 每100个文件提交一次，避免事务过大
                     if files_saved % 100 == 0:
                         db_session.commit()
-                        logger.info(f"[Task {self.request.id}] 💾 批量提交 (每100个文件): "
-                                   f"文件={files_saved}/{total_files} (向量化={files_vectorized}), "
-                                   f"符号={symbols_saved} (向量化={symbols_vectorized}), "
-                                   f"错误(文件={files_errors}, 符号={symbols_errors}, 文件向量化={file_vectorization_errors}, 符号向量化={vectorization_errors})")
+                        # 批量提交日志改为每200个文件记录一次，减少日志量
+                        if files_saved % 200 == 0:
+                            logger.info(f"[Task {self.request.id}] 💾 批量提交: "
+                                       f"文件={files_saved}/{total_files} (向量化={files_vectorized}), "
+                                       f"符号={symbols_saved} (向量化={symbols_vectorized}), "
+                                       f"错误(文件={files_errors}, 符号={symbols_errors}, 文件向量化={file_vectorization_errors}, 符号向量化={vectorization_errors})")
                     
-                    # 每1000个符号记录一次
-                    if symbols_saved > 0 and symbols_saved % 1000 == 0:
+                    # 每处理50个文件记录一次进度（用于监控长时间运行的任务）
+                    if files_saved > 0 and files_saved % 50 == 0:
+                        logger.info(f"[Task {self.request.id}] 📊 文件保存进度: {files_saved}/{total_files} (MySQL={files_saved}, 错误={files_errors})")
+                    
+                    # 每500个符号记录一次（减少日志频率）
+                    if symbols_saved > 0 and symbols_saved % 500 == 0:
                         logger.info(f"[Task {self.request.id}] 📊 符号保存进度: "
                                    f"已保存={symbols_saved}, 已向量化={symbols_vectorized}, "
                                    f"向量化错误={vectorization_errors}")
@@ -656,29 +990,80 @@ def clone_and_analyze(self, repo_id: int, repo_url: str, branch: str = 'main'):
             logger.info(f"[Task {self.request.id}] 💾 数据库提交完成")
             
             logger.info(f"[Task {self.request.id}] ========== ✅ 数据保存完成 ==========")
-            logger.info(f"[Task {self.request.id}] 📈 保存统计:")
-            success_rate = (files_saved / total_files * 100) if total_files > 0 else 0
-            logger.info(f"[Task {self.request.id}]   - 文件: {files_saved}/{total_files} (成功率: {success_rate:.1f}%)")
-            logger.info(f"[Task {self.request.id}]   - 文件向量化: {files_vectorized}/{files_saved} 个 (OpenSearch code_files)")
-            file_vectorization_rate = (files_vectorized / files_saved * 100) if files_saved > 0 else 0
-            logger.info(f"[Task {self.request.id}]   - 文件向量化率: {file_vectorization_rate:.1f}%")
-            logger.info(f"[Task {self.request.id}]   - 符号: {symbols_saved} 个 (MySQL)")
-            logger.info(f"[Task {self.request.id}]   - 符号向量化: {symbols_vectorized} 个 (OpenSearch code_symbols)")
-            symbol_vectorization_rate = (symbols_vectorized / symbols_saved * 100) if symbols_saved > 0 else 0
-            logger.info(f"[Task {self.request.id}]   - 符号向量化率: {symbol_vectorization_rate:.1f}%")
-            logger.info(f"[Task {self.request.id}]   - 错误: 文件={files_errors}, 文件向量化={file_vectorization_errors}, 符号={symbols_errors}, 符号向量化={vectorization_errors}")
-            file_vectorization_rate = (files_vectorized / files_saved * 100) if files_saved > 0 else 0
-            logger.info(f"[Task {self.request.id}]   - 文件向量化率: {file_vectorization_rate:.1f}%")
-            logger.info(f"[Task {self.request.id}]   - 符号: {symbols_saved} 个 (MySQL)")
-            logger.info(f"[Task {self.request.id}]   - 符号向量化: {symbols_vectorized} 个 (OpenSearch code_symbols)")
-            symbol_vectorization_rate = (symbols_vectorized / symbols_saved * 100) if symbols_saved > 0 else 0
-            logger.info(f"[Task {self.request.id}]   - 符号向量化率: {symbol_vectorization_rate:.1f}%")
-            logger.info(f"[Task {self.request.id}]   - 错误: 文件={files_errors}, 文件向量化={file_vectorization_errors}, 符号={symbols_errors}, 符号向量化={vectorization_errors}")
+            # 保存统计信息（合并输出，避免重复）
+            # ========== 创建文件之间的依赖关系边 ==========
+            # 在所有文件节点创建完成后，统一创建依赖关系边
+            if settings.USE_NEBULA_GRAPH and file_imports_data and file_path_to_vid_map:
+                try:
+                    from app.services.nebula_code_service import get_nebula_code_service
+                    nebula_service = get_nebula_code_service(db_session)
+                    
+                    import asyncio
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        total_edges_created = 0
+                        for file_info in file_imports_data:
+                            source_file_path = file_info['file_path']
+                            source_file_vid = file_info['file_vid']
+                            imports = file_info.get('imports', [])
+                            
+                            if not imports:
+                                continue
+                            
+                            for imp in imports:
+                                import_module = imp.get('module', '') or imp.get('name', '')
+                                if not import_module:
+                                    continue
+                                
+                                # 尝试解析导入模块为本地文件路径
+                                target_file_path = _resolve_import_to_file_path(
+                                    import_module, 
+                                    source_file_path, 
+                                    list(file_path_to_vid_map.keys()),
+                                    repo_local_path
+                                )
+                                
+                                if target_file_path and target_file_path in file_path_to_vid_map:
+                                    target_file_vid = file_path_to_vid_map[target_file_path]
+                                    # 创建 imports 边
+                                    try:
+                                        loop.run_until_complete(
+                                            nebula_service._create_imports_edge(
+                                                source_vid=source_file_vid,
+                                                target_vid=target_file_vid,
+                                                import_statement=import_module,
+                                                line_number=imp.get('line', 0)
+                                            )
+                                        )
+                                        total_edges_created += 1
+                                    except Exception as edge_error:
+                                        # 边可能已存在，或者创建失败，忽略错误（避免中断流程）
+                                        error_msg = str(edge_error).lower()
+                                        if 'existed' not in error_msg and 'duplicate' not in error_msg:
+                                            # 如果不是"已存在"的错误，记录警告（但只记录前10个）
+                                            if total_edges_created < 10:
+                                                logger.debug(f"[Task {self.request.id}] 创建依赖边失败: {source_file_path} -> {target_file_path}, 错误: {edge_error}")
+                                        pass
+                        
+                        if total_edges_created > 0:
+                            logger.info(f"[Task {self.request.id}] ✅ 已创建 {total_edges_created} 条文件依赖关系边")
+                    finally:
+                        loop.close()
+                except Exception as edges_error:
+                    logger.warning(f"[Task {self.request.id}] ⚠️ 创建文件依赖关系边失败: {edges_error}")
             
-            # 计算平均每个文件的符号数
-            if files_saved > 0:
-                avg_symbols = symbols_saved / files_saved
-                logger.info(f"[Task {self.request.id}]   - 平均每个文件符号数: {avg_symbols:.1f}")
+            success_rate = (files_saved / total_files * 100) if total_files > 0 else 0
+            file_vectorization_rate = (files_vectorized / files_saved * 100) if files_saved > 0 else 0
+            symbol_vectorization_rate = (symbols_vectorized / symbols_saved * 100) if symbols_saved > 0 else 0
+            avg_symbols = (symbols_saved / files_saved) if files_saved > 0 else 0
+            
+            logger.info(f"[Task {self.request.id}] 📈 保存统计: "
+                       f"文件={files_saved}/{total_files}({success_rate:.1f}%), "
+                       f"文件向量化={files_vectorized}/{files_saved}({file_vectorization_rate:.1f}%), "
+                       f"符号={symbols_saved}, 符号向量化={symbols_vectorized}({symbol_vectorization_rate:.1f}%), "
+                       f"平均符号数={avg_symbols:.1f}, "
+                       f"错误(文件={files_errors}, 文件向量化={file_vectorization_errors}, 符号={symbols_errors}, 符号向量化={vectorization_errors})")
             
         except Exception as save_error:
             db_session.rollback()
@@ -691,17 +1076,57 @@ def clone_and_analyze(self, repo_id: int, repo_url: str, branch: str = 'main'):
             logger.info(f"[Task {self.request.id}] 🔒 数据库会话已关闭")
         
         logger.info(f"[Task {self.request.id}] ========== ✅ 分析任务完成 ==========")
-        logger.info(f"[Task {self.request.id}] 📊 最终统计:")
-        logger.info(f"[Task {self.request.id}]   - 文件保存: {files_saved if 'files_saved' in locals() else 0}")
-        logger.info(f"[Task {self.request.id}]   - 符号保存: {symbols_saved if 'symbols_saved' in locals() else 0}")
-        logger.info(f"[Task {self.request.id}]   - 代码统计: {analysis.get('statistics', {})}")
+        # 最终统计（简化输出，避免与保存统计重复）
+        files_count = files_saved if 'files_saved' in locals() else 0
+        symbols_count = symbols_saved if 'symbols_saved' in locals() else 0
+        files_vectorized_count = files_vectorized if 'files_vectorized' in locals() else 0
+        symbols_vectorized_count = symbols_vectorized if 'symbols_vectorized' in locals() else 0
+        files_errors_count = files_errors if 'files_errors' in locals() else 0
+        
+        logger.info(f"[Task {self.request.id}] 📊 最终统计: "
+                   f"文件={files_count} (MySQL={files_count}, 错误={files_errors_count}), "
+                   f"符号={symbols_count}, "
+                   f"文件向量化={files_vectorized_count}/{files_count}, "
+                   f"符号向量化={symbols_vectorized_count}/{symbols_count}, "
+                   f"统计={analysis.get('statistics', {})}")
+        
+        # 如果 NebulaGraph 启用但文件数为0，记录警告
+        if settings.USE_NEBULA_GRAPH and files_count == 0:
+            logger.warning(f"[Task {self.request.id}] ⚠️ NebulaGraph 已启用但未创建任何文件节点，请检查错误日志")
+        
+        # 自动触发 Wiki 内容生成任务
+        try:
+            logger.info(f"[Task {self.request.id}] 🚀 自动触发 Wiki 内容生成任务: repo_id={repo_id}")
+            wiki_task = celery_app.send_task(
+                'tasks.code_repository_tasks.generate_wiki_content',
+                args=[repo_id],
+                queue='code'
+            )
+            logger.info(f"[Task {self.request.id}] ✅ Wiki 生成任务已发送: task_id={wiki_task.id}")
+        except Exception as wiki_task_error:
+            # Wiki 任务发送失败不影响主任务，只记录警告
+            logger.warning(f"[Task {self.request.id}] ⚠️ 自动触发 Wiki 生成任务失败: {wiki_task_error}")
         
         return {
             'status': 'completed',
             'repository_id': repo_id,
             'statistics': analysis['statistics'],
-            'files_saved': files_saved if 'files_saved' in locals() else 0,
-            'symbols_saved': symbols_saved if 'symbols_saved' in locals() else 0
+            'files_saved': files_count,
+            'symbols_saved': symbols_count,
+            'files_vectorized': files_vectorized_count,
+            'symbols_vectorized': symbols_vectorized_count,
+            'vectorization_status': {
+                'files': {
+                    'total': files_count,
+                    'vectorized': files_vectorized_count,
+                    'rate': (files_vectorized_count / files_count * 100) if files_count > 0 else 0
+                },
+                'symbols': {
+                    'total': symbols_count,
+                    'vectorized': symbols_vectorized_count,
+                    'rate': (symbols_vectorized_count / symbols_count * 100) if symbols_count > 0 else 0
+                }
+            }
         }
     
     except Exception as e:
@@ -940,8 +1365,21 @@ def analyze_with_agent(self, repo_id: int, use_cache: bool = True):
         # 2. 获取仓库路径
         repo = db.query(CodeRepository).filter(CodeRepository.id == repo_id).first()
         
-        if not repo or not repo.local_path:
-            raise ValueError("仓库未克隆")
+        if not repo:
+            logger.warning(f"[Task {self.request.id}] 仓库 {repo_id} 不存在，跳过 Agent 分析（可能已被删除）")
+            return {
+                'status': 'skipped',
+                'repository_id': repo_id,
+                'message': '仓库不存在，跳过 Agent 分析'
+            }
+        
+        if not repo.local_path:
+            logger.warning(f"[Task {self.request.id}] 仓库 {repo_id} 未克隆，跳过 Agent 分析")
+            return {
+                'status': 'skipped',
+                'repository_id': repo_id,
+                'message': '仓库未克隆，跳过 Agent 分析'
+            }
         
         # 3. 更新任务进度
         self.update_state(
@@ -982,6 +1420,16 @@ def analyze_with_agent(self, repo_id: int, use_cache: bool = True):
                 'statistics': agent_result.get('statistics', {})
             })
         
+        # 在保存缓存前再次检查仓库是否存在（防止在分析过程中被删除）
+        repo_check = db.query(CodeRepository).filter(CodeRepository.id == repo_id).first()
+        if not repo_check:
+            logger.warning(f"[Task {self.request.id}] 仓库 {repo_id} 不存在，跳过缓存保存（可能已被删除）")
+            return {
+                'status': 'skipped',
+                'repository_id': repo_id,
+                'message': '仓库不存在，跳过缓存保存'
+            }
+        
         # 使用重试机制保存
         try:
             db.execute(
@@ -992,6 +1440,19 @@ def analyze_with_agent(self, repo_id: int, use_cache: bool = True):
                 {"repo_id": repo_id, "cache_data": agent_result_json, "expires_at": expires_at}
             )
             db.commit()
+        except IntegrityError as e:
+            # 外键约束错误（1452）：仓库不存在
+            error_code = e.orig.args[0] if hasattr(e, 'orig') and hasattr(e.orig, 'args') and len(e.orig.args) > 0 else None
+            if error_code == 1452 and 'foreign key constraint fails' in str(e).lower():
+                logger.warning(f"[Task {self.request.id}] 仓库 {repo_id} 不存在，跳过缓存保存（可能已被删除）")
+                db.rollback()
+                return {
+                    'status': 'skipped',
+                    'repository_id': repo_id,
+                    'message': '仓库不存在，跳过缓存保存'
+                }
+            else:
+                raise
         except OperationalError as e:
             error_code = e.orig.args[0] if hasattr(e, 'orig') and hasattr(e.orig, 'args') else None
             if error_code in (2006, 2013) or 'gone away' in str(e).lower():
@@ -1003,6 +1464,15 @@ def analyze_with_agent(self, repo_id: int, use_cache: bool = True):
                 from sqlalchemy.orm import sessionmaker
                 SessionLocal = sessionmaker(bind=engine)
                 db = SessionLocal()
+                # 再次检查仓库是否存在
+                repo_check = db.query(CodeRepository).filter(CodeRepository.id == repo_id).first()
+                if not repo_check:
+                    logger.warning(f"[Task {self.request.id}] 仓库 {repo_id} 不存在，跳过缓存保存")
+                    return {
+                        'status': 'skipped',
+                        'repository_id': repo_id,
+                        'message': '仓库不存在，跳过缓存保存'
+                    }
                 db.execute(
                     text("""INSERT INTO code_analysis_cache 
                     (repository_id, cache_type, cache_key, cache_data, expires_at)
@@ -1612,6 +2082,31 @@ async def _index_wiki_content_to_opensearch(task_self, repo_id: int, repo_name: 
         raise
 
 
+@celery_app.task(name='tasks.code_repository_tasks.delayed_release_wiki_lock')
+def delayed_release_wiki_lock(lock_key: str, lock_value: str, repo_id: int):
+    """
+    延迟释放 Wiki 生成锁的后台任务
+    
+    Args:
+        lock_key: 锁的键
+        lock_value: 锁的值
+        repo_id: 仓库ID
+    """
+    import time
+    import asyncio
+    from app.core.cache import cache_manager
+    
+    # 等待30秒，给前端足够时间读取缓存
+    time.sleep(30)
+    
+    # 释放锁
+    try:
+        asyncio.run(cache_manager.release_lock(lock_key, value=lock_value))
+        logger.debug(f"已释放 Wiki 生成锁: repo_id={repo_id}")
+    except Exception as lock_err:
+        logger.warning(f"释放 Wiki 生成锁失败: repo_id={repo_id}, 错误={lock_err}")
+
+
 @celery_app.task(bind=True, name='tasks.code_repository_tasks.generate_wiki_content')
 def generate_wiki_content(self, repo_id: int):
     """
@@ -1636,8 +2131,31 @@ def generate_wiki_content(self, repo_id: int):
     from typing import Dict
     
     lock_key = f"wiki_generation_lock:{repo_id}"
-    lock_timeout = 300  # 5分钟超时
+    # 锁超时时间：考虑到大模型调用可能较慢，设置为15分钟
+    # 实际任务执行时间约40-50秒，但LLM调用可能较慢，需要预留足够时间
+    # 15分钟 = 900秒，足够覆盖：代码分析(30s) + 多个LLM调用(每个2-3分钟) + 缓存写入(5s)
+    lock_timeout = 900  # 15分钟超时，确保覆盖所有大模型调用
     lock_value = str(self.request.id)  # 使用任务ID作为锁值
+    
+    # 先检查缓存，如果已有缓存且未过期，直接跳过（不需要获取锁）
+    result = db.execute(
+        text("""SELECT cache_data, created_at FROM code_analysis_cache 
+        WHERE repository_id = :repo_id AND cache_type = 'wiki_content' AND cache_key = 'full'
+        AND (expires_at IS NULL OR expires_at > NOW())
+        ORDER BY created_at DESC LIMIT 1"""),
+        {"repo_id": repo_id}
+    )
+    cached = result.fetchone()
+    
+    if cached:
+        logger.info(f"[Task {self.request.id}] ✅ Wiki 内容已存在且未过期，跳过生成: repo_id={repo_id}, created_at={cached[1]}")
+        db.close()
+        return {
+            'status': 'skipped',
+            'repository_id': repo_id,
+            'message': 'Wiki 内容已存在且未过期，跳过生成',
+            'cached': True
+        }
     
     # 尝试获取锁
     lock_acquired = asyncio.run(cache_manager.acquire_lock(lock_key, timeout=lock_timeout, value=lock_value))
@@ -1645,6 +2163,7 @@ def generate_wiki_content(self, repo_id: int):
     if not lock_acquired:
         # 已有任务正在运行，跳过本次执行
         logger.warning(f"[Task {self.request.id}] Wiki 生成任务已在运行中，跳过: repo_id={repo_id}")
+        db.close()
         return {
             'status': 'skipped',
             'repository_id': repo_id,
@@ -1657,8 +2176,21 @@ def generate_wiki_content(self, repo_id: int):
         # 1. 获取仓库路径
         repo = db.query(CodeRepository).filter(CodeRepository.id == repo_id).first()
         
-        if not repo or not repo.local_path:
-            raise ValueError("仓库未克隆")
+        if not repo:
+            logger.warning(f"[Task {self.request.id}] 仓库 {repo_id} 不存在，跳过 Wiki 生成（可能已被删除）")
+            return {
+                'status': 'skipped',
+                'repository_id': repo_id,
+                'message': '仓库不存在，跳过 Wiki 生成'
+            }
+        
+        if not repo.local_path:
+            logger.warning(f"[Task {self.request.id}] 仓库 {repo_id} 未克隆，跳过 Wiki 生成")
+            return {
+                'status': 'skipped',
+                'repository_id': repo_id,
+                'message': '仓库未克隆，跳过 Wiki 生成'
+            }
         
         # 2. 更新任务进度
         self.update_state(
@@ -1678,6 +2210,26 @@ def generate_wiki_content(self, repo_id: int):
         
         # 5. 缓存结果（24小时）
         expires_at = datetime.now() + timedelta(hours=24)
+        
+        # 记录 Wiki 内容结构（用于调试）
+        logger.info(f"[Task {self.request.id}] 📦 Wiki 内容结构: "
+                   f"system_architecture存在={bool(wiki_content.get('system_architecture'))}, "
+                   f"getting_started存在={bool(wiki_content.get('getting_started'))}")
+        
+        if wiki_content.get('system_architecture'):
+            arch = wiki_content['system_architecture']
+            logger.info(f"[Task {self.request.id}] 📊 system_architecture 结构: "
+                       f"子系统={len(arch.get('functional_subsystems_table', []))}, "
+                       f"存储系统={len(arch.get('storage_systems_table', []))}, "
+                       f"架构决策={len(arch.get('key_architectural_decisions', []))}")
+        
+        if wiki_content.get('getting_started'):
+            gs = wiki_content['getting_started']
+            logger.info(f"[Task {self.request.id}] 📊 getting_started 结构: "
+                       f"前置条件={len(gs.get('prerequisites', []))}, "
+                       f"安装步骤={len(gs.get('installation_steps', []))}, "
+                       f"运行命令={'已设置' if gs.get('run_project_command') else '未设置'}")
+        
         wiki_content_json = json.dumps(wiki_content)
         
         # 检查数据大小
@@ -1686,26 +2238,71 @@ def generate_wiki_content(self, repo_id: int):
         
         if data_size_mb > 50:
             logger.warning(f"[Task {self.request.id}] Wiki 内容过大（{data_size_mb:.2f}MB），只存储关键信息")
-            # 只存储关键信息（但保留重要部分）
-            wiki_content_json = json.dumps({
+            # 只存储关键信息（但保留完整的 system_architecture，因为包含重要的表格数据）
+            reduced_content = {
                 'project_overview': wiki_content.get('project_overview', ''),
                 'what_is_project': wiki_content.get('what_is_project', ''),
                 'core_components': wiki_content.get('core_components', []),
                 'value_propositions': wiki_content.get('value_propositions', []),
                 'key_features': wiki_content.get('key_features', []),
                 'getting_started': wiki_content.get('getting_started', {}),  # 保留快速开始指南
-                'system_architecture': {
-                    'three_tier_architecture': wiki_content.get('system_architecture', {}).get('three_tier_architecture', ''),
-                    'architectural_patterns': wiki_content.get('system_architecture', {}).get('architectural_patterns', ''),
-                } if wiki_content.get('system_architecture') else {},
+                'system_architecture': wiki_content.get('system_architecture', {}),  # 保留完整的 system_architecture（包含所有表格）
                 'technology_stack': {
                     'core_technologies': wiki_content.get('technology_stack', {}).get('core_technologies', ''),
                 } if wiki_content.get('technology_stack') else {},
                 'statistics': wiki_content.get('statistics', {}) if 'statistics' in wiki_content else {}
-            })
+            }
+            wiki_content_json = json.dumps(reduced_content)
+            logger.info(f"[Task {self.request.id}] 📦 精简后的 Wiki 内容大小: {len(wiki_content_json.encode('utf-8')) / (1024 * 1024):.2f} MB")
+            logger.info(f"[Task {self.request.id}] ✅ 已保留完整的 system_architecture 数据（包含所有表格）")
+        
+        # 在保存缓存前再次检查仓库是否存在（防止在生成过程中被删除）
+        repo_check = db.query(CodeRepository).filter(CodeRepository.id == repo_id).first()
+        if not repo_check:
+            logger.warning(f"[Task {self.request.id}] 仓库 {repo_id} 不存在，跳过缓存保存（可能已被删除）")
+            return {
+                'status': 'skipped',
+                'repository_id': repo_id,
+                'message': '仓库不存在，跳过缓存保存'
+            }
         
         # 使用重试机制保存
         try:
+            logger.info(f"[Task {self.request.id}] 💾 开始保存 Wiki 内容到数据库: "
+                       f"repo_id={repo_id}, cache_type=wiki_content, cache_key=full, "
+                       f"数据大小={data_size_mb:.2f}MB")
+            
+            # 在入库前再次验证关键字段
+            logger.debug(f"[Task {self.request.id}] 入库前验证")
+            try:
+                wiki_content_parsed = json.loads(wiki_content_json)
+                logger.debug(f"[Task {self.request.id}] JSON 解析成功")
+                if wiki_content_parsed.get('system_architecture'):
+                    arch = wiki_content_parsed['system_architecture']
+                    logger.debug(f"[Task {self.request.id}] system_architecture 验证: "
+                               f"子系统={len(arch.get('functional_subsystems_table', []))}, "
+                               f"存储系统={len(arch.get('storage_systems_table', []))}, "
+                               f"决策={len(arch.get('key_architectural_decisions', []))}")
+                    
+                    # 验证 mermaid_api_diagram
+                    mermaid_api = arch.get('mermaid_api_diagram', '')
+                    logger.debug(f"[Task {self.request.id}] mermaid_api_diagram 验证: 类型={type(mermaid_api).__name__}, 长度={len(mermaid_api)}")
+                    
+                    # 验证每个决策的 rationale 和 impact
+                    decisions = arch.get('key_architectural_decisions', [])
+                    for idx, decision in enumerate(decisions):
+                        rationale = decision.get('rationale', '')
+                        impact = decision.get('impact', '')
+                        # 降低阈值：30 字符以下才警告（因为简洁的描述也是有效的）
+                        if len(rationale) < 30:
+                            logger.debug(f"[Task {self.request.id}] 🔍 决策[{idx}] rationale 较短（{len(rationale)}字符）: {rationale[:100]}")
+                        if len(impact) < 30:
+                            logger.debug(f"[Task {self.request.id}] 🔍 决策[{idx}] impact 较短（{len(impact)}字符）: {impact[:100]}")
+            except Exception as e:
+                logger.warning(f"[Task {self.request.id}] ⚠️ 步骤5失败: 入库前验证失败: {e}")
+                import traceback
+                logger.warning(f"[Task {self.request.id}] ⚠️ 错误堆栈: {traceback.format_exc()}")
+            
             db.execute(
                 text("""INSERT INTO code_analysis_cache 
                 (repository_id, cache_type, cache_key, cache_data, expires_at)
@@ -1714,6 +2311,52 @@ def generate_wiki_content(self, repo_id: int):
                 {"repo_id": repo_id, "cache_data": wiki_content_json, "expires_at": expires_at}
             )
             db.commit()
+            
+            logger.info(f"[Task {self.request.id}] ✅ Wiki 内容已保存到数据库: "
+                       f"repo_id={repo_id}, 表=code_analysis_cache, cache_type=wiki_content")
+            
+            # 验证入库后的数据（从数据库读取验证）
+            try:
+                result = db.execute(
+                    text("""SELECT cache_data FROM code_analysis_cache 
+                    WHERE repository_id = :repo_id AND cache_type = 'wiki_content' AND cache_key = 'full'
+                    ORDER BY created_at DESC LIMIT 1"""),
+                    {"repo_id": repo_id}
+                )
+                cached_row = result.fetchone()
+                if cached_row:
+                    cached_data = json.loads(cached_row[0])
+                    logger.debug(f"[Task {self.request.id}] 入库后验证 - 从数据库读取成功，数据大小={len(cached_row[0])} 字符")
+                    if cached_data.get('system_architecture'):
+                        cached_arch = cached_data['system_architecture']
+                        logger.debug(f"[Task {self.request.id}] 入库后验证 - system_architecture 字段完整: "
+                                   f"子系统={len(cached_arch.get('functional_subsystems_table', []))}, "
+                                   f"存储系统={len(cached_arch.get('storage_systems_table', []))}, "
+                                   f"决策={len(cached_arch.get('key_architectural_decisions', []))}")
+                        # 验证 mermaid_api_diagram
+                        mermaid_api = cached_arch.get('mermaid_api_diagram', '')
+                        if not mermaid_api:
+                            logger.warning(f"[Task {self.request.id}] ⚠️ 入库后验证 - mermaid_api_diagram 为空")
+                    if cached_data.get('getting_started'):
+                        gs = cached_data['getting_started']
+                        run_cmd = gs.get('run_project_command', '')
+                        if not run_cmd or len(run_cmd) < 3:
+                            logger.warning(f"[Task {self.request.id}] ⚠️ 入库后验证 - run_project_command 为空或过短")
+            except Exception as e:
+                logger.warning(f"[Task {self.request.id}] ⚠️ 入库后验证失败: {e}")
+        except IntegrityError as e:
+            # 外键约束错误（1452）：仓库不存在
+            error_code = e.orig.args[0] if hasattr(e, 'orig') and hasattr(e.orig, 'args') and len(e.orig.args) > 0 else None
+            if error_code == 1452 and 'foreign key constraint fails' in str(e).lower():
+                logger.warning(f"[Task {self.request.id}] 仓库 {repo_id} 不存在，跳过缓存保存（可能已被删除）")
+                db.rollback()
+                return {
+                    'status': 'skipped',
+                    'repository_id': repo_id,
+                    'message': '仓库不存在，跳过缓存保存'
+                }
+            else:
+                raise
         except OperationalError as e:
             error_code = e.orig.args[0] if hasattr(e, 'orig') and hasattr(e.orig, 'args') else None
             if error_code in (2006, 2013) or 'gone away' in str(e).lower():
@@ -1725,6 +2368,15 @@ def generate_wiki_content(self, repo_id: int):
                 from sqlalchemy.orm import sessionmaker
                 SessionLocal = sessionmaker(bind=engine)
                 db = SessionLocal()
+                # 再次检查仓库是否存在
+                repo_check = db.query(CodeRepository).filter(CodeRepository.id == repo_id).first()
+                if not repo_check:
+                    logger.warning(f"[Task {self.request.id}] 仓库 {repo_id} 不存在，跳过缓存保存")
+                    return {
+                        'status': 'skipped',
+                        'repository_id': repo_id,
+                        'message': '仓库不存在，跳过缓存保存'
+                    }
                 db.execute(
                     text("""INSERT INTO code_analysis_cache 
                     (repository_id, cache_type, cache_key, cache_data, expires_at)
@@ -1761,24 +2413,41 @@ def generate_wiki_content(self, repo_id: int):
     
     except Exception as e:
         logger.error(f"[Task {self.request.id}] Wiki 内容生成失败: {e}", exc_info=True)
-        self.update_state(
-            state='FAILURE',
-            meta={'error': str(e)}
-        )
-        raise
+        # 不抛出异常，而是返回失败状态，避免 Celery 序列化错误
+        return {
+            'status': 'failed',
+            'repository_id': repo_id,
+            'error': str(e)
+        }
     finally:
-        # 延迟释放锁（等待5秒，确保缓存已写入，并给前端时间处理结果）
-        # 这样可以避免任务刚完成就立即触发新任务
-        import time
-        time.sleep(5)  # 等待5秒
-        
-        # 释放锁
-        try:
-            asyncio.run(cache_manager.release_lock(lock_key, value=lock_value))
-            logger.debug(f"[Task {self.request.id}] 已释放 Wiki 生成锁: repo_id={repo_id}")
-        except Exception as lock_err:
-            logger.warning(f"[Task {self.request.id}] 释放锁失败: {lock_err}")
+        # 立即关闭数据库连接，不阻塞任务完成
         db.close()
+        
+        # 使用后台任务延迟释放锁（30秒后），避免阻塞主任务
+        # 这样可以避免任务刚完成就立即触发新任务，同时主任务可以立即完成
+        # 延迟时间说明：
+        # - 缓存写入：约1-2秒
+        # - 前端处理响应：约1-2秒
+        # - 网络延迟：约1-2秒
+        # - 前端可能有多个组件同时调用：需要额外时间
+        # - 前端轮询间隔：通常3-5秒
+        # - 预留缓冲时间：避免边界情况
+        # 总计：30秒足够覆盖所有场景，且不会让任务看起来卡住
+        try:
+            # 发送延迟任务（30秒后执行）
+            delayed_release_wiki_lock.apply_async(
+                args=[lock_key, lock_value, repo_id],
+                countdown=30
+            )
+            logger.debug(f"[Task {self.request.id}] 已安排延迟释放锁任务（30秒后）: repo_id={repo_id}")
+        except Exception as delay_task_err:
+            # 如果延迟任务发送失败，立即释放锁（降级方案）
+            logger.warning(f"[Task {self.request.id}] 发送延迟释放锁任务失败，立即释放锁: {delay_task_err}")
+            try:
+                asyncio.run(cache_manager.release_lock(lock_key, value=lock_value))
+                logger.debug(f"[Task {self.request.id}] 已立即释放 Wiki 生成锁: repo_id={repo_id}")
+            except Exception as lock_err:
+                logger.warning(f"[Task {self.request.id}] 释放锁失败: {lock_err}")
 
 
 @celery_app.task(bind=True, name='tasks.code_repository_tasks.analyze_code_structure')
@@ -1805,8 +2474,21 @@ def analyze_code_structure(self, repo_id: int):
         # 1. 获取仓库路径
         repo = db.query(CodeRepository).filter(CodeRepository.id == repo_id).first()
         
-        if not repo or not repo.local_path:
-            raise ValueError("仓库未克隆")
+        if not repo:
+            logger.warning(f"[Task {self.request.id}] 仓库 {repo_id} 不存在，跳过代码结构解析（可能已被删除）")
+            return {
+                'status': 'skipped',
+                'repository_id': repo_id,
+                'message': '仓库不存在，跳过代码结构解析'
+            }
+        
+        if not repo.local_path:
+            logger.warning(f"[Task {self.request.id}] 仓库 {repo_id} 未克隆，跳过代码结构解析")
+            return {
+                'status': 'skipped',
+                'repository_id': repo_id,
+                'message': '仓库未克隆，跳过代码结构解析'
+            }
         
         # 2. 更新任务进度
         self.update_state(
@@ -1852,6 +2534,16 @@ def analyze_code_structure(self, repo_id: int):
             }
             cache_json = json.dumps(cache_data)
         
+        # 在保存缓存前再次检查仓库是否存在（防止在分析过程中被删除）
+        repo_check = db.query(CodeRepository).filter(CodeRepository.id == repo_id).first()
+        if not repo_check:
+            logger.warning(f"[Task {self.request.id}] 仓库 {repo_id} 不存在，跳过缓存保存（可能已被删除）")
+            return {
+                'status': 'skipped',
+                'repository_id': repo_id,
+                'message': '仓库不存在，跳过缓存保存'
+            }
+        
         # 使用重试机制保存
         try:
             db.execute(
@@ -1862,6 +2554,19 @@ def analyze_code_structure(self, repo_id: int):
                 {"repo_id": repo_id, "cache_data": cache_json, "expires_at": expires_at}
             )
             db.commit()
+        except IntegrityError as e:
+            # 外键约束错误（1452）：仓库不存在
+            error_code = e.orig.args[0] if hasattr(e, 'orig') and hasattr(e.orig, 'args') and len(e.orig.args) > 0 else None
+            if error_code == 1452 and 'foreign key constraint fails' in str(e).lower():
+                logger.warning(f"[Task {self.request.id}] 仓库 {repo_id} 不存在，跳过缓存保存（可能已被删除）")
+                db.rollback()
+                return {
+                    'status': 'skipped',
+                    'repository_id': repo_id,
+                    'message': '仓库不存在，跳过缓存保存'
+                }
+            else:
+                raise
         except OperationalError as e:
             error_code = e.orig.args[0] if hasattr(e, 'orig') and hasattr(e.orig, 'args') else None
             if error_code in (2006, 2013) or 'gone away' in str(e).lower():
@@ -1873,6 +2578,15 @@ def analyze_code_structure(self, repo_id: int):
                 from sqlalchemy.orm import sessionmaker
                 SessionLocal = sessionmaker(bind=engine)
                 db = SessionLocal()
+                # 再次检查仓库是否存在
+                repo_check = db.query(CodeRepository).filter(CodeRepository.id == repo_id).first()
+                if not repo_check:
+                    logger.warning(f"[Task {self.request.id}] 仓库 {repo_id} 不存在，跳过缓存保存")
+                    return {
+                        'status': 'skipped',
+                        'repository_id': repo_id,
+                        'message': '仓库不存在，跳过缓存保存'
+                    }
                 db.execute(
                     text("""INSERT INTO code_analysis_cache 
                     (repository_id, cache_type, cache_key, cache_data, expires_at)

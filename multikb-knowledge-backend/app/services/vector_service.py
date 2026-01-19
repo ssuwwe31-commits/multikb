@@ -283,7 +283,8 @@ class VectorService:
             max_length = _settings.TEXT_EMBED_MAX_CHARS
             if len(processed_text) > max_length:
                 processed_text = processed_text[:max_length]
-                logger.debug(f"文本长度超限，截断到 {max_length} 字符")
+                # 减少日志噪音：只在 DEBUG 级别记录，且不频繁输出
+                # logger.debug(f"文本长度超限，截断到 {max_length} 字符")
             
             return processed_text
             

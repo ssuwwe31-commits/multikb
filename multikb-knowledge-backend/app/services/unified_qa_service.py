@@ -315,7 +315,8 @@ class UnifiedQAService:
             }
             
             from opensearch_schemas.code_indices import CODE_SYMBOLS_INDEX
-            response = await self.opensearch.client.search(
+            response = await asyncio.to_thread(
+                self.opensearch.client.search,
                 index=CODE_SYMBOLS_INDEX,
                 body=search_body
             )

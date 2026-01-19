@@ -85,8 +85,11 @@ def setup_celery_logging():
     task_logger.addHandler(console_handler)
     
     # 应用日志器（multikb-knowledge-backend）同时输出到控制台与任务文件
+    # 注意：避免重复添加处理器，防止日志重复输出
     app_logger = logging.getLogger("multikb-knowledge-backend")
     app_logger.setLevel(logging.DEBUG)
+    # 设置 propagate=False，避免日志传播到根日志器导致重复输出
+    app_logger.propagate = False
     if console_handler not in app_logger.handlers:
         app_logger.addHandler(console_handler)
     if task_handler not in app_logger.handlers:

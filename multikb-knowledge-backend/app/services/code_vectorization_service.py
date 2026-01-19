@@ -9,6 +9,7 @@ from datetime import datetime
 import os
 import hashlib
 import asyncio
+import json
 
 from app.core.logging import logger
 from app.config.settings import settings
@@ -56,6 +57,7 @@ class CodeVectorizationService:
             ).first()
             
             if not code_file:
+                logger.error(f"[文件向量化] ❌ 文件不存在: file_id={file_id}")
                 raise ValueError(f"File {file_id} not found")
             
             # 2. 获取文件内容
@@ -73,22 +75,48 @@ class CodeVectorizationService:
                 if not os.path.exists(file_full_path):
                     raise ValueError(f"File not found: {file_full_path}")
                 
-                with open(file_full_path, 'r', encoding='utf-8') as f:
+                with open(file_full_path, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read()
+            
+            # 检查文件是否为空（空文件或只有空白字符）
+            if not content or not content.strip():
+                # 不再记录跳过空文件的日志，减少日志量
+                return None  # 返回 None 表示跳过，而不是抛出错误
             
             # 3. 预处理代码内容（提取关键信息，针对 qwen3-embedding:4b 优化）
             processed_content = self._preprocess_code_content(content, code_file.language)
             
-            # 4. 生成向量（使用 Ollama qwen3-embedding:4b，代码专用向量模型）
-            # 支持缓存和重试机制
-            vector = await self._generate_embedding_with_retry(
-                processed_content, 
-                code_file.content_hash
-            )
+            # 检查预处理后的内容是否为空
+            if not processed_content or not processed_content.strip():
+                # 不再记录跳过预处理后为空文件的日志，减少日志量
+                return None
+            
+            # 3.5. 计算预处理后的内容哈希（用于向量复用）
+            # 注意：使用预处理后的内容计算哈希，确保相同预处理结果复用相同向量
+            processed_content_hash = hashlib.md5(processed_content.encode('utf-8')).hexdigest()
+            
+            # 3.6. 检查 OpenSearch 中是否已有相同预处理内容哈希的文件向量（复用向量）
+            # 查询时只按 content_hash（预处理后的），不涉及文件路径，所以不同目录但内容相同的文件可以复用
+            vector = None
+            existing_vector = await self._get_existing_vector_by_hash(processed_content_hash)
+            if existing_vector:
+                # 不再记录文件向量复用的日志，减少日志量
+                vector = existing_vector
+                # 将复用的向量加入内存缓存
+                if self.cache_enabled:
+                    cache_key = f"hash_{processed_content_hash}"
+                    self.vector_cache[cache_key] = vector
+            
+            # 4. 如果未找到已存在的向量，生成新向量（使用 Ollama qwen3-embedding:4b，代码专用向量模型）
+            if not vector:
+                vector = await self._generate_embedding_with_retry(
+                    processed_content, 
+                    processed_content_hash  # 使用预处理后的内容哈希
+                )
             
             if not vector:
-                logger.warning(f"文件向量为空: {code_file.file_path}")
-                raise ValueError("向量生成失败，返回空向量")
+                logger.warning(f"[文件向量化] ❌ 向量为空，跳过: file_id={file_id}")
+                return None  # 返回 None 表示跳过，而不是抛出错误
             
             # 4. 准备索引文档
             doc = {
@@ -106,7 +134,8 @@ class CodeVectorizationService:
                 "imports_count": code_file.imports_count,
                 "complexity_score": code_file.complexity_score,
                 "content_vector": vector,
-                "content_hash": code_file.content_hash,
+                "content_hash": code_file.content_hash,  # 原始内容哈希（用于文件变更检测）
+                "processed_content_hash": processed_content_hash,  # 预处理后的内容哈希（用于向量复用）
                 "created_at": code_file.created_at.isoformat() if code_file.created_at else None,
                 "updated_at": code_file.updated_at.isoformat() if code_file.updated_at else None,
                 "vector_updated_at": datetime.now().isoformat()
@@ -125,9 +154,7 @@ class CodeVectorizationService:
             code_file.vector_indexed = True
             code_file.vector_updated_at = datetime.now()
             self.db.commit()
-            
-            # 移除单个文件的成功日志，减少日志量（批量统计会在批量完成后统一输出）
-            # logger.debug(f"向量化代码文件成功: {code_file.file_path}")
+            # 不再记录单个文件的向量化完成日志，减少日志量（批量统计会在批量完成后统一输出）
             
             return {
                 "file_id": file_id,
@@ -139,6 +166,107 @@ class CodeVectorizationService:
         except Exception as e:
             logger.error(f"向量化代码文件失败 (file_id={file_id}): {e}", exc_info=True)
             self.db.rollback()
+            raise
+    
+    async def vectorize_code_file_by_vid(
+        self,
+        file_vid: str,
+        file_path: str,
+        repository_id: int,
+        knowledge_base_id: Optional[int],
+        language: Optional[str] = None,
+        content: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        使用 VID 向量化代码文件（不依赖 MySQL）
+        
+        Args:
+            file_vid: 文件节点的 VID
+            file_path: 文件路径
+            repository_id: 仓库ID
+            knowledge_base_id: 知识库ID
+            language: 编程语言
+            content: 文件内容
+            
+        Returns:
+            向量化结果
+        """
+        try:
+            # 检查文件是否为空
+            if not content or not content.strip():
+                # 不再记录跳过空文件的日志，减少日志量
+                return None
+            
+            # 预处理代码内容
+            processed_content = self._preprocess_code_content(content, language)
+            
+            if not processed_content or not processed_content.strip():
+                # 不再记录跳过预处理后为空文件的日志，减少日志量
+                return None
+            
+            # 计算预处理后的内容哈希
+            processed_content_hash = hashlib.md5(processed_content.encode('utf-8')).hexdigest()
+            
+            # 检查是否已有相同哈希的向量
+            vector = None
+            existing_vector = await self._get_existing_vector_by_hash(processed_content_hash)
+            if existing_vector:
+                # 不再记录文件向量复用的日志，减少日志量
+                vector = existing_vector
+                if self.cache_enabled:
+                    cache_key = f"hash_{processed_content_hash}"
+                    self.vector_cache[cache_key] = vector
+            
+            # 生成新向量
+            if not vector:
+                vector = await self._generate_embedding_with_retry(
+                    processed_content,
+                    processed_content_hash
+                )
+            
+            if not vector:
+                logger.warning(f"[文件向量化] ❌ 向量为空，跳过: file_vid={file_vid}")
+                return None
+            
+            # 计算内容哈希
+            content_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
+            
+            # 准备索引文档
+            doc = {
+                "file_id": 0,  # 不再使用 MySQL ID，设置为 0
+                "file_vid": file_vid,  # 添加 VID 字段
+                "repository_id": repository_id,
+                "knowledge_base_id": knowledge_base_id or 0,
+                "file_path": file_path,
+                "file_name": os.path.basename(file_path),
+                "language": language or "",
+                "content": content[:10000],  # 限制内容长度
+                "content_summary": self._extract_code_summary(content, language),  # 智能提取摘要
+                "content_vector": vector,
+                "content_hash": content_hash,
+                "processed_content_hash": processed_content_hash,
+                "vector_updated_at": datetime.now().isoformat()
+            }
+            
+            # 索引到 OpenSearch（使用 VID 作为 doc_id）
+            doc_id = file_vid  # 直接使用 VID 作为 doc_id
+            await self.opensearch.index_document(
+                index=CODE_FILES_INDEX,
+                doc_id=doc_id,
+                document=doc
+            )
+            
+            # 不再记录单个文件的向量化完成日志，减少日志量（批量统计会在批量完成后统一输出）
+            
+            return {
+                "file_vid": file_vid,
+                "doc_id": doc_id,
+                "vector_dimension": len(vector),
+                "status": "success"
+            }
+            
+        except Exception as e:
+            logger.error(f"向量化代码文件失败 (file_vid={file_vid}): {e}", exc_info=True)
             raise
     
     async def vectorize_code_symbol(
@@ -163,6 +291,7 @@ class CodeVectorizationService:
             ).first()
             
             if not symbol:
+                logger.error(f"[符号向量化] ❌ 符号不存在: symbol_id={symbol_id}")
                 raise ValueError(f"Symbol {symbol_id} not found")
             
             # 2. 获取符号代码内容（如果未提供）
@@ -200,19 +329,50 @@ class CodeVectorizationService:
                 symbol, code_content
             )
             
-            # 4. 生成向量（使用 Ollama qwen3-embedding:4b，代码专用向量模型）
-            # 支持缓存和重试机制
+            # 检查向量化文本是否为空
+            if not vectorization_text or not vectorization_text.strip():
+                # 不再记录跳过空符号的日志，减少日志量
+                return None
+            
+            # 3.5. 计算内容哈希
             content_hash = hashlib.md5(vectorization_text.encode()).hexdigest()
-            vector = await self._generate_embedding_with_retry(
-                vectorization_text,
-                content_hash
-            )
+            
+            # 3.6. 检查 OpenSearch 中是否已有相同 content_hash 的符号向量（复用向量）
+            vector = None
+            existing_vector = await self._get_existing_symbol_vector_by_hash(content_hash)
+            if existing_vector:
+                # 不再记录每个符号的向量复用日志，减少日志量（批量统计会在批量完成后统一输出）
+                vector = existing_vector
+                # 将复用的向量加入内存缓存
+                if self.cache_enabled:
+                    cache_key = f"hash_{content_hash}"
+                    self.vector_cache[cache_key] = vector
+            
+            # 4. 如果未找到已存在的向量，生成新向量（使用 Ollama qwen3-embedding:4b，代码专用向量模型）
+            # 支持缓存和重试机制
+            if not vector:
+                vector = await self._generate_embedding_with_retry(
+                    vectorization_text,
+                    content_hash
+                )
             
             if not vector:
-                logger.warning(f"符号向量为空: {symbol.qualified_name}")
-                raise ValueError("向量生成失败，返回空向量")
+                logger.warning(f"[符号向量化] ❌ 向量为空，跳过: symbol_id={symbol_id}")
+                return None  # 返回 None 表示跳过，而不是抛出错误（与文件向量化保持一致）
             
             # 6. 准备索引文档
+            # 将 parameters 转换为字符串（因为索引 schema 定义为 text 类型）
+            parameters_str = None
+            if symbol.parameters:
+                if isinstance(symbol.parameters, (list, dict)):
+                    try:
+                        parameters_str = json.dumps(symbol.parameters, ensure_ascii=False)
+                    except (TypeError, ValueError) as e:
+                        logger.warning(f"参数序列化失败，使用 str() 转换: {e}")
+                        parameters_str = str(symbol.parameters)
+                else:
+                    parameters_str = str(symbol.parameters)
+            
             doc = {
                 "symbol_id": symbol.id,
                 "file_id": symbol.file_id,
@@ -223,7 +383,7 @@ class CodeVectorizationService:
                 "qualified_name": symbol.qualified_name,
                 "signature": symbol.signature,
                 "docstring": symbol.docstring,
-                "parameters": str(symbol.parameters) if symbol.parameters else None,
+                "parameters": parameters_str,  # 转换为字符串以匹配 text 类型
                 "return_type": symbol.return_type,
                 "file_path": code_file.file_path if code_file else None,
                 "start_line": symbol.start_line,
@@ -232,6 +392,7 @@ class CodeVectorizationService:
                 "complexity_score": symbol.complexity_score,
                 "lines_count": symbol.lines_count,
                 "content_vector": vector,
+                "content_hash": content_hash,  # 符号的预处理内容哈希，用于向量复用
                 "created_at": symbol.created_at.isoformat() if symbol.created_at else None,
                 "updated_at": symbol.updated_at.isoformat() if symbol.updated_at else None,
                 "vector_updated_at": datetime.now().isoformat()
@@ -250,9 +411,7 @@ class CodeVectorizationService:
             symbol.vector_indexed = True
             symbol.vector_updated_at = datetime.now()
             self.db.commit()
-            
-            # 减少日志量：单个符号成功日志降级为 debug
-            logger.debug(f"向量化代码符号成功: {symbol.qualified_name}")
+            # 不再记录单个符号的向量化完成日志，减少日志量（批量统计会在批量完成后统一输出）
             
             return {
                 "symbol_id": symbol_id,
@@ -263,6 +422,151 @@ class CodeVectorizationService:
             
         except Exception as e:
             logger.error(f"向量化代码符号失败: {e}")
+            raise
+    
+    async def vectorize_symbol_by_vid(
+        self,
+        symbol_vid: str,
+        file_vid: str,
+        repository_id: int,
+        knowledge_base_id: Optional[int],
+        symbol_name: str,
+        symbol_type: str,
+        qualified_name: Optional[str],
+        signature: Optional[str],
+        docstring: Optional[str],
+        parameters: Optional[List],
+        return_type: Optional[str],
+        file_path: str,
+        start_line: int,
+        end_line: int,
+        complexity_score: Optional[float] = None,
+        lines_count: Optional[int] = None,
+        code_content: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        使用 VID 向量化代码符号（不依赖 MySQL）
+        
+        Args:
+            symbol_vid: 符号节点的 VID
+            file_vid: 文件节点的 VID
+            repository_id: 仓库ID
+            knowledge_base_id: 知识库ID
+            symbol_name: 符号名称
+            symbol_type: 符号类型
+            qualified_name: 限定名
+            signature: 函数签名
+            docstring: 文档字符串
+            parameters: 参数列表
+            return_type: 返回类型
+            file_path: 文件路径
+            start_line: 起始行号
+            end_line: 结束行号
+            complexity_score: 复杂度
+            lines_count: 代码行数
+            code_content: 代码内容
+            
+        Returns:
+            向量化结果
+        """
+        try:
+            # 1. 构建向量化文本
+            vectorization_parts = []
+            if docstring:
+                vectorization_parts.append(docstring)
+            if signature:
+                vectorization_parts.append(signature)
+            if code_content:
+                vectorization_parts.append(code_content[:2000])
+            if not vectorization_parts:
+                vectorization_parts.append(f"{symbol_type} {symbol_name}")
+            
+            vectorization_text = "\n".join(vectorization_parts)
+            
+            if not vectorization_text or not vectorization_text.strip():
+                logger.info(f"[符号向量化] ⚠️ 向量化文本为空，跳过: qualified_name={qualified_name}")
+                return None
+            
+            # 2. 计算内容哈希
+            content_hash = hashlib.md5(vectorization_text.encode()).hexdigest()
+            
+            # 3. 检查是否已有相同哈希的向量
+            vector = None
+            existing_vector = await self._get_existing_symbol_vector_by_hash(content_hash)
+            if existing_vector:
+                # 不再记录每个符号的向量复用日志，减少日志量
+                vector = existing_vector
+                if self.cache_enabled:
+                    cache_key = f"hash_{content_hash}"
+                    self.vector_cache[cache_key] = vector
+            
+            # 4. 生成新向量
+            if not vector:
+                vector = await self._generate_embedding_with_retry(
+                    vectorization_text,
+                    content_hash
+                )
+            
+            if not vector:
+                # 不再记录跳过空向量的日志，减少日志量
+                return None
+            
+            # 5. 准备索引文档
+            parameters_str = None
+            if parameters:
+                if isinstance(parameters, (list, dict)):
+                    try:
+                        parameters_str = json.dumps(parameters, ensure_ascii=False)
+                    except (TypeError, ValueError) as e:
+                        logger.warning(f"参数序列化失败，使用 str() 转换: {e}")
+                        parameters_str = str(parameters)
+                else:
+                    parameters_str = str(parameters)
+            
+            doc = {
+                "symbol_id": 0,  # 不再使用 MySQL ID，设置为 0
+                "symbol_vid": symbol_vid,  # 添加 VID 字段
+                "file_id": 0,  # 不再使用 MySQL ID，设置为 0
+                "file_vid": file_vid,  # 添加 VID 字段
+                "repository_id": repository_id,
+                "knowledge_base_id": knowledge_base_id or 0,
+                "symbol_name": symbol_name,
+                "symbol_type": symbol_type,
+                "qualified_name": qualified_name or symbol_name,
+                "signature": signature or "",
+                "docstring": docstring or "",
+                "parameters": parameters_str,
+                "return_type": return_type or "",
+                "file_path": file_path,
+                "start_line": start_line,
+                "end_line": end_line,
+                "complexity_score": complexity_score or 0.0,
+                "lines_count": lines_count or 0,
+                "code_content": code_content[:2000] if code_content else "",
+                "content_vector": vector,
+                "content_hash": content_hash,
+                "vector_updated_at": datetime.now().isoformat()
+            }
+            
+            # 6. 索引到 OpenSearch（使用 VID 作为 doc_id）
+            doc_id = symbol_vid  # 直接使用 VID 作为 doc_id
+            await self.opensearch.index_document(
+                index=CODE_SYMBOLS_INDEX,
+                doc_id=doc_id,
+                document=doc
+            )
+            
+            # 不再记录单个符号的向量化完成日志，减少日志量（批量统计会在批量完成后统一输出）
+            
+            return {
+                "symbol_vid": symbol_vid,
+                "doc_id": doc_id,
+                "vector_dimension": len(vector),
+                "status": "success"
+            }
+            
+        except Exception as e:
+            logger.error(f"向量化代码符号失败 (symbol_vid={symbol_vid}): {e}", exc_info=True)
             raise
     
     async def vectorize_symbol_direct(
@@ -325,19 +629,49 @@ class CodeVectorizationService:
             
             vectorization_text = "\n".join(vectorization_parts)
             
-            # 2. 生成向量（使用 Ollama qwen3-embedding:4b，代码专用向量模型）
-            # 支持缓存和重试机制
+            # 检查向量化文本是否为空
+            if not vectorization_text or not vectorization_text.strip():
+                logger.info(f"[符号向量化] ⚠️ 向量化文本为空，跳过: qualified_name={qualified_name}")
+                return None
+            
+            # 2. 计算内容哈希（用于向量复用）
             content_hash = hashlib.md5(vectorization_text.encode()).hexdigest()
-            vector = await self._generate_embedding_with_retry(
-                vectorization_text,
-                content_hash
-            )
+            
+            # 2.5. 检查 OpenSearch 中是否已有相同 content_hash 的符号向量（复用向量）
+            vector = None
+            existing_vector = await self._get_existing_symbol_vector_by_hash(content_hash)
+            if existing_vector:
+                # 不再记录每个符号的向量复用日志，减少日志量
+                vector = existing_vector
+                # 将复用的向量加入内存缓存
+                if self.cache_enabled:
+                    cache_key = f"hash_{content_hash}"
+                    self.vector_cache[cache_key] = vector
+            
+            # 3. 如果未找到已存在的向量，生成新向量（使用 Ollama qwen3-embedding:4b，代码专用向量模型）
+            if not vector:
+                vector = await self._generate_embedding_with_retry(
+                    vectorization_text,
+                    content_hash
+                )
             
             if not vector:
-                logger.warning(f"符号向量为空: {qualified_name}")
-                raise ValueError("向量生成失败，返回空向量")
+                # 不再记录跳过空向量的日志，减少日志量
+                return None  # 返回 None 表示跳过，而不是抛出错误（与文件向量化保持一致）
             
             # 4. 准备索引文档（包含完整数据）
+            # 将 parameters 转换为字符串（因为索引 schema 定义为 text 类型）
+            parameters_str = None
+            if parameters:
+                if isinstance(parameters, (list, dict)):
+                    try:
+                        parameters_str = json.dumps(parameters, ensure_ascii=False)
+                    except (TypeError, ValueError) as e:
+                        logger.warning(f"参数序列化失败，使用 str() 转换: {e}")
+                        parameters_str = str(parameters)
+                else:
+                    parameters_str = str(parameters)
+            
             doc = {
                 "symbol_id": symbol_id,
                 "file_id": file_id,
@@ -348,7 +682,7 @@ class CodeVectorizationService:
                 "qualified_name": qualified_name,
                 "signature": signature,
                 "docstring": docstring,
-                "parameters": parameters if parameters else None,  # 保持JSON格式
+                "parameters": parameters_str,  # 转换为字符串以匹配 text 类型
                 "return_type": return_type,
                 "file_path": file_path,
                 "start_line": start_line,
@@ -426,7 +760,7 @@ class CodeVectorizationService:
             
             stats["files"]["total"] = len(files)
             # 批量处理开始日志：保留 info 级别（重要进度信息）
-            logger.info(f"开始批量向量化文件: 总数={len(files)}, 并发数={max_concurrent}, 模型={settings.OLLAMA_EMBEDDING_MODEL}")
+            logger.info(f"[批量向量化] 开始批量向量化文件: 总数={len(files)}, 并发数={max_concurrent}, 模型={settings.OLLAMA_EMBEDDING_MODEL}")
             
             # 使用信号量控制并发数
             semaphore = asyncio.Semaphore(max_concurrent)
@@ -461,8 +795,12 @@ class CodeVectorizationService:
                                 logger.warning(f"检查 OpenSearch 文档存在性失败: {e}，继续向量化")
                         
                         # 执行向量化
-                        await self.vectorize_code_file(file_id)
-                        stats["files"]["success"] += 1
+                        result = await self.vectorize_code_file(file_id)
+                        if result is None:
+                            # 返回 None 表示跳过（空文件等），不算错误
+                            stats["files"]["skipped"] += 1
+                        else:
+                            stats["files"]["success"] += 1
                     except Exception as e:
                         stats["files"]["error"] += 1
                         logger.error(f"向量化文件失败 {file_path}: {e}")
@@ -478,7 +816,8 @@ class CodeVectorizationService:
             ]
             await asyncio.gather(*file_tasks, return_exceptions=True)
             
-            logger.info(f"文件向量化完成: 成功={stats['files']['success']}, 错误={stats['files']['error']}, 跳过={stats['files']['skipped']}")
+            # 文件向量化完成日志改为DEBUG，减少日志量（最终汇总会统一输出）
+            logger.debug(f"[批量向量化] 文件向量化完成: 成功={stats['files']['success']}, 跳过={stats['files']['skipped']}, 错误={stats['files']['error']}")
             
             # 2. 向量化所有符号（如果启用，并发控制）
             if include_symbols:
@@ -489,15 +828,19 @@ class CodeVectorizationService:
                 
                 stats["symbols"]["total"] = len(symbols)
                 # 批量处理开始日志：保留 info 级别（重要进度信息）
-                logger.info(f"开始批量向量化符号: 总数={len(symbols)}, 并发数={max_concurrent}, 模型={settings.OLLAMA_EMBEDDING_MODEL}")
+                logger.info(f"[批量向量化] 开始批量向量化符号: 总数={len(symbols)}, 并发数={max_concurrent}, 模型={settings.OLLAMA_EMBEDDING_MODEL}")
                 
                 symbol_progress = {"current": 0}
                 
                 async def vectorize_symbol_with_semaphore(symbol_id: int, symbol_name: str):
                     async with semaphore:
                         try:
-                            await self.vectorize_code_symbol(symbol_id)
-                            stats["symbols"]["success"] += 1
+                            result = await self.vectorize_code_symbol(symbol_id)
+                            if result is None:
+                                # 返回 None 表示跳过（空符号等），不算错误
+                                stats["symbols"]["skipped"] += 1
+                            else:
+                                stats["symbols"]["success"] += 1
                         except Exception as e:
                             stats["symbols"]["error"] += 1
                             logger.error(f"向量化符号失败 {symbol_name}: {e}")
@@ -513,10 +856,11 @@ class CodeVectorizationService:
                 ]
                 await asyncio.gather(*symbol_tasks, return_exceptions=True)
                 
-                logger.info(f"符号向量化完成: 成功={stats['symbols']['success']}, 错误={stats['symbols']['error']}")
-            
+                # 符号向量化完成日志改为DEBUG，减少日志量（最终汇总会统一输出）
+                logger.debug(f"[批量向量化] 符号向量化完成: 成功={stats['symbols']['success']}, 跳过={stats['symbols']['skipped']}, 错误={stats['symbols']['error']}")
+
             stats["end_time"] = datetime.now().isoformat()
-            logger.info(f"批量向量化完成: {stats}")
+            logger.info(f"[批量向量化] ✅ 批量向量化完成: 文件成功={stats['files']['success']}, 文件跳过={stats['files']['skipped']}, 文件错误={stats['files']['error']}, 符号成功={stats['symbols']['success']}, 符号跳过={stats['symbols']['skipped']}, 符号错误={stats['symbols']['error']}")
             return stats
             
         except Exception as e:
@@ -547,7 +891,7 @@ class CodeVectorizationService:
                 code_file.opensearch_doc_id = None
                 self.db.commit()
             
-            logger.debug(f"删除文件向量成功: {file_id}")
+            # 不再记录删除文件向量的日志，减少日志量
             return True
             
         except Exception as e:
@@ -578,7 +922,7 @@ class CodeVectorizationService:
                 symbol.opensearch_doc_id = None
                 self.db.commit()
             
-            logger.debug(f"删除符号向量成功: {symbol_id}")
+            # 不再记录删除符号向量的日志，减少日志量
             return True
             
         except Exception as e:
@@ -775,6 +1119,94 @@ class CodeVectorizationService:
         
         return result
     
+    async def _get_existing_vector_by_hash(self, processed_content_hash: str) -> Optional[List[float]]:
+        """
+        从 OpenSearch 中查询已存在的相同预处理内容哈希的文件向量
+        
+        Args:
+            processed_content_hash: 预处理后的内容哈希（用于向量复用）
+            
+        Returns:
+            向量列表，如果未找到则返回 None
+            
+        注意：
+            - 查询只按 processed_content_hash，不涉及文件路径
+            - 不同目录但预处理后内容相同的文件可以复用向量
+        """
+        try:
+            # 查询 OpenSearch 中是否有相同预处理内容哈希的文件
+            # 注意：使用 processed_content_hash 而不是 content_hash，确保相同预处理结果复用相同向量
+            # 查询不涉及文件路径，所以不同目录但预处理后内容相同的文件可以复用
+            query = {
+                "size": 1,
+                "query": {
+                    "term": {
+                        "processed_content_hash": processed_content_hash
+                    }
+                },
+                "_source": ["content_vector", "file_id", "file_path", "processed_content_hash"]
+            }
+            
+            # 使用 OpenSearchService 的异步 search 方法
+            response = await self.opensearch.search(
+                index=CODE_FILES_INDEX,
+                query=query
+            )
+            
+            hits = response.get("hits", {}).get("hits", [])
+            if hits and len(hits) > 0:
+                hit = hits[0]
+                vector = hit.get("_source", {}).get("content_vector")
+                if vector and isinstance(vector, list) and len(vector) > 0:
+                    return vector
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"[查询已存在文件向量] ❌ 查询失败: {e}", exc_info=True)
+            return None
+    
+    async def _get_existing_symbol_vector_by_hash(self, content_hash: str) -> Optional[List[float]]:
+        """
+        从 OpenSearch 中查询已存在的相同 content_hash 的符号向量
+        
+        Args:
+            content_hash: 符号内容哈希
+            
+        Returns:
+            向量列表，如果未找到则返回 None
+        """
+        try:
+            # 查询 OpenSearch 中是否有相同 content_hash 的符号
+            query = {
+                "size": 1,
+                "query": {
+                    "term": {
+                        "content_hash": content_hash
+                    }
+                },
+                "_source": ["content_vector", "symbol_id", "qualified_name"]
+            }
+            
+            # 使用 OpenSearchService 的异步 search 方法
+            response = await self.opensearch.search(
+                index=CODE_SYMBOLS_INDEX,
+                query=query
+            )
+            
+            hits = response.get("hits", {}).get("hits", [])
+            if hits and len(hits) > 0:
+                hit = hits[0]
+                vector = hit.get("_source", {}).get("content_vector")
+                if vector and isinstance(vector, list) and len(vector) > 0:
+                    return vector
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"[查询已存在符号向量] ❌ 查询失败: {e}", exc_info=True)
+            return None
+    
     async def _generate_embedding_with_retry(
         self,
         text: str,
@@ -794,8 +1226,6 @@ class CodeVectorizationService:
         if self.cache_enabled and content_hash:
             cache_key = f"hash_{content_hash}"
             if cache_key in self.vector_cache:
-                # 移除详细日志，减少日志量
-                # logger.debug(f"使用缓存的向量（hash: {content_hash[:8]}...）")
                 return self.vector_cache[cache_key]
         
         # 2. 生成向量（带重试）
@@ -815,34 +1245,36 @@ class CodeVectorizationService:
                     timeout=timeout
                 )
                 
-                # 3. 缓存向量
-                if self.cache_enabled and content_hash and vector:
-                    cache_key = f"hash_{content_hash}"
-                    # 限制缓存大小（最多1000个，避免内存占用过大）
-                    max_cache_size = 1000
-                    if len(self.vector_cache) >= max_cache_size:
-                        # 如果缓存满了，清除最旧的（简单策略：清除前100个）
-                        keys_to_remove = list(self.vector_cache.keys())[:100]
-                        for key in keys_to_remove:
-                            del self.vector_cache[key]
-                        logger.debug(f"向量缓存已满，清除 {len(keys_to_remove)} 个旧缓存项")
-                    self.vector_cache[cache_key] = vector
+                if vector and isinstance(vector, list) and len(vector) > 0:
+                    # 3. 缓存向量
+                    if self.cache_enabled and content_hash and vector:
+                        cache_key = f"hash_{content_hash}"
+                        # 限制缓存大小（最多5000个，避免内存占用过大）
+                        max_cache_size = 5000
+                        if len(self.vector_cache) >= max_cache_size:
+                            # 如果缓存满了，清除最旧的（简单策略：清除前500个）
+                            keys_to_remove = list(self.vector_cache.keys())[:500]
+                            for key in keys_to_remove:
+                                del self.vector_cache[key]
+                        self.vector_cache[cache_key] = vector
+                    
+                    return vector
+                else:
+                    last_error = "向量生成返回空向量"
+                    if attempt < retry_times - 1:
+                        await asyncio.sleep(retry_delay * (attempt + 1))  # 指数退避
                 
-                return vector
-                
-            except asyncio.TimeoutError:
+            except asyncio.TimeoutError as e:
                 last_error = f"向量化超时（{timeout}秒）"
-                logger.warning(f"向量化超时，重试 {attempt + 1}/{retry_times}")
+                if attempt < retry_times - 1:
+                    await asyncio.sleep(retry_delay * (attempt + 1))  # 指数退避
             except Exception as e:
                 last_error = str(e)
-                logger.warning(f"向量化失败，重试 {attempt + 1}/{retry_times}: {e}")
-            
-            # 等待后重试
-            if attempt < retry_times - 1:
-                await asyncio.sleep(retry_delay * (attempt + 1))  # 指数退避
+                if attempt < retry_times - 1:
+                    await asyncio.sleep(retry_delay * (attempt + 1))  # 指数退避
         
         # 所有重试都失败
-        logger.error(f"向量化失败，已重试 {retry_times} 次: {last_error}")
+        logger.error(f"[生成向量] ❌ 失败，已重试 {retry_times} 次: {last_error}")
         raise Exception(f"向量化失败: {last_error}")
     
     def _extract_code_summary(self, content: str, language: Optional[str] = None) -> str:

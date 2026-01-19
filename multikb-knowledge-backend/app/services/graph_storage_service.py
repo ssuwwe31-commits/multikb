@@ -1065,22 +1065,11 @@ class NebulaGraphStorage(GraphStorageInterface):
             metadata = rel_data.get('metadata', {}) if isinstance(rel_data.get('metadata'), dict) else {}
             metadata_str = json.dumps(metadata).replace('\\', '\\\\').replace('"', '\\"')
             
-            # 详细日志：仅在启用详细日志时输出
-            if settings.KG_VERBOSE_LOGGING:
-                logger.info(f"[插入关系] 准备插入关系到NebulaGraph: source_vid={source_vid}, target_vid={target_vid}, "
-                           f"type={relation_type}, mysql_id={mysql_id}, user_id={user_id}")
-                logger.debug(f"[插入关系] 详细数据: description长度={len(description)}, weight={weight}, confidence={confidence}, metadata={metadata}")
-            
             # 使用单行格式，避免换行导致的语法错误
             nGQL = f'INSERT EDGE relationship(relation_type, description, weight, confidence, metadata, mysql_id, user_id, created_at, updated_at) VALUES "{source_vid}" -> "{target_vid}":("{relation_type}", "{description}", {weight}, {confidence}, "{metadata_str}", {mysql_id}, {user_id}, timestamp(), timestamp());'
             
-            # 调试：仅在启用详细日志时记录生成的 nGQL
-            if settings.KG_VERBOSE_LOGGING:
-                logger.debug(f"[插入关系] 生成的INSERT语句（前500字符）: {nGQL[:500]}")
-            
             await self._execute(nGQL, space=space)
-            if settings.KG_VERBOSE_LOGGING:
-                logger.info(f"[插入关系] 创建关系成功: {source_vid} -> {target_vid}, type={relation_type} in space={space}")
+            # 不再记录每个关系的成功日志，只在错误时记录
             return True
         except Exception as e:
             logger.error(f"[插入关系] 创建NebulaGraph关系失败: source_vid={source_vid}, target_vid={target_vid}, "
@@ -1279,7 +1268,11 @@ class NebulaGraphStorage(GraphStorageInterface):
                 try:
                     await self._execute(nGQL, space=space)
                     total_success += len(batch_vids)
-                    logger.debug(f"批量删除实体成功: {len(batch_vids)}个实体 (批次 {i//batch_size + 1})")
+                    # 改为每10个批次或最后一批才打印日志，减少日志量
+                    batch_num = i//batch_size + 1
+                    total_batches = (len(vids) + batch_size - 1) // batch_size
+                    if batch_num % 10 == 0 or batch_num == total_batches:
+                        logger.debug(f"[批量删除] 批次 {batch_num}/{total_batches}: 已删除 {len(batch_vids)} 个实体 (累计: {total_success}/{len(vids)})")
                 except Exception as e:
                     # 如果批量删除失败，回退到逐个删除
                     logger.warning(f"批量删除失败，回退到逐个删除: {e}")
@@ -1291,6 +1284,7 @@ class NebulaGraphStorage(GraphStorageInterface):
                             total_failed += 1
                             logger.error(f"删除实体失败: vid={vid}, 错误={err}")
             
+            logger.debug(f"[批量删除] ✅ 批量删除完成: 成功={total_success}, 失败={total_failed}, 总计={len(vids)}")
             return {"success": total_success, "failed": total_failed}
         except Exception as e:
             logger.error(f"批量删除NebulaGraph实体失败: {e}")

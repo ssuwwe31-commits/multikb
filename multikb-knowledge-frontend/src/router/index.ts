@@ -276,6 +276,15 @@ const routes: RouteRecordRaw[] = [
         }
       },
       {
+        path: 'code-repository/search',
+        name: 'CodeRepositorySearch',
+        component: () => import('@/views/CodeRepository/search.vue'),
+        meta: {
+          title: '代码查询',
+          keepAlive: true
+        }
+      },
+      {
         path: 'code-repository/:id',
         name: 'CodeRepositoryDetail',
         component: () => import('@/views/CodeRepository/detail.vue'),

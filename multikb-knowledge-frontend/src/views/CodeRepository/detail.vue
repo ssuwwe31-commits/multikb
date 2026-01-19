@@ -203,6 +203,37 @@
           <el-table-column prop="module" label="模块" min-width="200" />
           <el-table-column prop="line" label="行号" width="100" />
         </el-table>
+
+        <el-divider />
+
+        <!-- 文件内容 -->
+        <div class="file-content-section">
+          <div class="file-content-header">
+            <h4>文件内容</h4>
+            <el-button 
+              size="small" 
+              @click="loadFileContent"
+              :loading="fileContentLoading"
+              v-if="!showFileContent"
+            >
+              查看内容
+            </el-button>
+            <el-button 
+              size="small" 
+              @click="showFileContent = false"
+              v-else
+            >
+              隐藏内容
+            </el-button>
+          </div>
+          
+          <div v-if="showFileContent" class="file-content-wrapper">
+            <div v-loading="fileContentLoading" class="file-content">
+              <pre v-if="fileContent"><code>{{ fileContent }}</code></pre>
+              <el-empty v-else description="无法加载文件内容" />
+            </div>
+          </div>
+        </div>
       </div>
     </el-dialog>
 
@@ -297,6 +328,9 @@ const codeStructure = ref<CodeStructure>()
 const fileSearchKeyword = ref('')
 const showFileDialog = ref(false)
 const selectedFile = ref<any>()
+const fileContent = ref('')
+const fileContentLoading = ref(false)
+const showFileContent = ref(false)
 
 // 依赖关系数据
 const dependenciesLoading = ref(false)
@@ -360,14 +394,9 @@ const loadSummary = async () => {
         wikiContent.value = wikiRes.data as WikiContent
         summary.value = wikiRes.data.project_overview
       } else if ('status' in wikiRes.data && wikiRes.data.status === 'processing') {
-        // 任务正在生成中，等待后重试一次
+        // 任务正在生成中，不立即重试，避免重复发送任务
         ElMessage.info('项目概述正在生成中，请稍候...')
-        await new Promise(resolve => setTimeout(resolve, 3000))
-        const retryRes = await codeRepositoryApi.getWikiContent(repoId.value, false)
-        if (retryRes.data && 'project_overview' in retryRes.data) {
-          wikiContent.value = retryRes.data as WikiContent
-          summary.value = retryRes.data.project_overview
-        }
+        // 不再自动重试，让用户手动刷新或等待任务完成
       }
     }
     
@@ -672,6 +701,35 @@ const getServiceTagType = (serviceType: string): string => {
 const viewFileDetail = (file: any) => {
   selectedFile.value = file
   showFileDialog.value = true
+  showFileContent.value = false
+  fileContent.value = ''
+}
+
+// 加载文件内容
+const loadFileContent = async () => {
+  if (!selectedFile.value || !selectedFile.value.file_path) {
+    ElMessage.warning('文件信息不完整')
+    return
+  }
+  
+  fileContentLoading.value = true
+  try {
+    const res = await codeRepositoryApi.getFileContent(
+      selectedFile.value.file_path,
+      repoId.value
+    )
+    if (res.data && res.data.content) {
+      fileContent.value = res.data.content
+      showFileContent.value = true
+    } else {
+      ElMessage.warning('文件内容为空')
+    }
+  } catch (error: any) {
+    console.error('加载文件内容失败:', error)
+    ElMessage.error(error.message || '加载文件内容失败')
+  } finally {
+    fileContentLoading.value = false
+  }
 }
 
 // 获取复杂度类型
@@ -770,10 +828,54 @@ const goBack = () => {
   router.back()
 }
 
+// 根据文件路径查找文件
+const findFileByPath = (filePath: string) => {
+  if (!codeStructure.value?.files) return null
+  const decodedPath = decodeURIComponent(filePath)
+  return codeStructure.value.files.find(
+    (f: any) => f.file_path === decodedPath || f.file_path.endsWith(decodedPath) || f.file_path.includes(decodedPath)
+  )
+}
+
+// 处理路由查询参数（文件路径或符号）
+const handleRouteQuery = async () => {
+  const filePath = route.query.file as string
+  const symbolName = route.query.symbol as string
+  
+  if (filePath) {
+    // 如果有文件路径参数，切换到代码结构标签页并打开文件
+    activeTab.value = 'structure'
+    await loadStructure()
+    
+    // 等待代码结构加载完成后查找文件
+    await nextTick()
+    const file = findFileByPath(filePath)
+    if (file) {
+      viewFileDetail(file)
+      // 自动加载文件内容
+      await nextTick()
+      await loadFileContent()
+      // 清除查询参数，避免刷新时重复打开
+      router.replace({ query: { ...route.query, file: undefined } })
+    } else {
+      ElMessage.warning(`未找到文件: ${decodeURIComponent(filePath)}`)
+    }
+  } else if (symbolName) {
+    // 如果有符号参数，切换到代码结构标签页
+    activeTab.value = 'structure'
+    await loadStructure()
+    // TODO: 实现符号定位功能
+    ElMessage.info(`符号: ${decodeURIComponent(symbolName)}`)
+  }
+}
+
 // 初始化
-onMounted(() => {
-  loadRepository()
-  loadSummary()
+onMounted(async () => {
+  await loadRepository()
+  await loadSummary()
+  
+  // 处理路由查询参数
+  await handleRouteQuery()
 })
 </script>
 
@@ -781,6 +883,51 @@ onMounted(() => {
 .code-repository-detail {
   padding: 20px;
   font-size: 14px;
+
+  .file-content-section {
+    margin-top: 20px;
+
+    .file-content-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+
+      h4 {
+        margin: 0;
+      }
+    }
+
+    .file-content-wrapper {
+      border: 1px solid #e4e7ed;
+      border-radius: 4px;
+      background: #f5f7fa;
+      max-height: 600px;
+      overflow: auto;
+
+      .file-content {
+        padding: 15px;
+        background: #ffffff;
+
+        pre {
+          margin: 0;
+          padding: 0;
+          font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+          font-size: 13px;
+          line-height: 1.6;
+          white-space: pre-wrap;
+          word-wrap: break-word;
+
+          code {
+            display: block;
+            color: #303133;
+            background: transparent;
+            padding: 0;
+          }
+        }
+      }
+    }
+  }
   
   * {
     line-height: 1.6;

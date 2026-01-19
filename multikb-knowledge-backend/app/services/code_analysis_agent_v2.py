@@ -50,7 +50,8 @@ class CodeAnalysisAgentV2:
         self.analyzer_service = CodeAnalyzerService()
         # API 调用链服务已删除
         # API 调用链 AI 服务已删除
-        self.parser_service = CodeParserService()
+        # 复用 analyzer_service 中的 parser_service，避免重复初始化
+        self.parser_service = self.analyzer_service.parser_service
         
         # 向量检索服务（如果可用）
         self.db = db

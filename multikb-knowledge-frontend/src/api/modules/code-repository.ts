@@ -178,6 +178,7 @@ export interface WikiContent {
       description: string
     }>
     quick_start_summary: string
+    run_project_command?: string
   }
   key_files?: Array<{
     path: string
@@ -338,6 +339,14 @@ export function analyzeFile(filePath: string, repositoryId: number) {
   })
 }
 
+export function getFileContent(filePath: string, repositoryId: number) {
+  return request({
+    url: `/code-analysis/files/${encodeURIComponent(filePath)}/content`,
+    method: 'get',
+    params: { repository_id: repositoryId }
+  })
+}
+
 /**
  * 7. 代码问答
  */
@@ -466,6 +475,38 @@ export function searchSymbols(params: {
 }) {
   return request({
     url: '/code-analysis/symbols/search',
+    method: 'get',
+    params
+  })
+}
+
+/**
+ * 查询调用链
+ */
+export function queryCallChain(params: {
+  repository_id: number
+  source: string
+  target: string
+  max_hops?: number
+}) {
+  return request({
+    url: '/code-analysis/query/call-chain',
+    method: 'get',
+    params
+  })
+}
+
+/**
+ * 查询依赖路径
+ */
+export function queryDependencyPath(params: {
+  repository_id: number
+  source: string
+  target: string
+  max_hops?: number
+}) {
+  return request({
+    url: '/code-analysis/query/dependency-path',
     method: 'get',
     params
   })

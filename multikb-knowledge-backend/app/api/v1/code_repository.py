@@ -55,8 +55,10 @@ async def list_repositories(
     try:
         from app.models.code_repository import CodeRepository
         
-        # 构建查询
-        query = db.query(CodeRepository)
+        # 构建查询（排除已删除的仓库）
+        query = db.query(CodeRepository).filter(
+            CodeRepository.is_deleted == False  # 只返回未删除的仓库
+        )
         
         if search:
             query = query.filter(CodeRepository.repo_name.like(f"%{search}%"))
@@ -324,114 +326,144 @@ async def get_code_structure(
         if repo.is_deleted:
             return error_response("仓库正在删除或已删除，无法获取代码结构")
         
-        # 2. 检查数据库表中是否有文件数据（优先使用数据库表）
-        file_service = CodeFileService(db)
-        files_result = file_service.list_files(
-            repository_id=repo_id,
-            language=None,
-            page=1,
-            page_size=10000  # 获取所有文件
-        )
+        # ========== 优先从 MySQL 查询统计信息 ==========
+        # 1. 从 code_files 表查询文件数和代码行数（实时统计）
+        from app.models.code_file import CodeFile
+        from app.models.code_symbol import CodeSymbol
+        from sqlalchemy import func
         
-        if files_result['total'] > 0:
-            logger.info(f"从数据库表获取代码结构: repo_id={repo_id}, 文件数={files_result['total']}")
+        file_stats = db.query(
+            func.count(CodeFile.id).label('total_files'),
+            func.sum(CodeFile.lines_of_code).label('total_lines')
+        ).filter(
+            CodeFile.repository_id == repo_id,
+            CodeFile.is_deleted == False
+        ).first()
+        
+        total_files = file_stats.total_files or 0 if file_stats else 0
+        total_lines = file_stats.total_lines or 0 if file_stats else 0
+        
+        # 2. 从 code_files 表查询语言分布（实时统计）
+        language_stats_query = db.query(
+            CodeFile.language,
+            func.count(CodeFile.id).label('count'),
+            func.sum(CodeFile.lines_of_code).label('lines')
+        ).filter(
+            CodeFile.repository_id == repo_id,
+            CodeFile.is_deleted == False,
+            CodeFile.language.isnot(None)
+        ).group_by(CodeFile.language).all()
+        
+        languages = {}
+        for stat in language_stats_query:
+            if stat.language:
+                languages[stat.language] = {
+                    "count": stat.count or 0,
+                    "lines": stat.lines or 0
+                }
+        
+        # 3. 从 code_symbols 表查询函数和类数量
+        symbol_stats = db.query(
+            CodeSymbol.symbol_type,
+            func.count(CodeSymbol.id).label('count')
+        ).filter(
+            CodeSymbol.repository_id == repo_id,
+            CodeSymbol.is_deleted == False,
+            CodeSymbol.symbol_type.in_(['function', 'class'])
+        ).group_by(CodeSymbol.symbol_type).all()
+        
+        # 统计函数和类数量
+        total_functions = 0
+        total_classes = 0
+        for stat in symbol_stats:
+            if stat.symbol_type == 'function':
+                total_functions = stat.count
+            elif stat.symbol_type == 'class':
+                total_classes = stat.count
+        
+        # 查询总符号数
+        total_symbols = db.query(func.count(CodeSymbol.id)).filter(
+            CodeSymbol.repository_id == repo_id,
+            CodeSymbol.is_deleted == False
+        ).scalar() or 0
+        
+        # 4. 尝试从缓存获取 API 端点和数据库表统计（如果存在）
+        # 这些统计信息在分析时计算，存储在缓存中
+        api_stats = {"frontend": 0, "backend": 0}
+        database_tables = 0
+        
+        cache_result = db.execute(
+            text("""SELECT cache_data FROM code_analysis_cache 
+            WHERE repository_id = :repo_id AND cache_type = 'statistics' AND cache_key = 'full'
+            AND (expires_at IS NULL OR expires_at > NOW())
+            ORDER BY created_at DESC LIMIT 1"""),
+            {"repo_id": repo_id}
+        )
+        cached_stats = cache_result.fetchone()
+        
+        if cached_stats:
+            try:
+                cached_data = json.loads(cached_stats[0])
+                if 'api_endpoints' in cached_data:
+                    api_stats = cached_data['api_endpoints']
+                if 'database_tables' in cached_data:
+                    database_tables = cached_data.get('database_tables', 0)
+            except Exception as e:
+                logger.warning(f"解析缓存统计信息失败: {e}")
+        
+        # 构建完整的统计信息（从 MySQL 表实时查询）
+        statistics = {
+            "total_files": total_files,
+            "total_lines": total_lines,
+            "total_symbols": total_symbols,
+            "total_functions": total_functions,
+            "total_classes": total_classes,
+            "api_endpoints": api_stats,
+            "database_tables": database_tables,
+            "languages": languages
+        }
+        
+        logger.info(f"从 MySQL 查询统计信息: repo_id={repo_id}, 文件数={total_files}, 代码行数={total_lines}, "
+                   f"函数数={total_functions}, 类数={total_classes}, 符号数={total_symbols}")
+        
+        # 5. 尝试从 NebulaGraph 获取文件列表（可选，用于文件树展示）
+        files_result = {'total': 0, 'files': []}
+        from app.services.nebula_code_service import get_nebula_code_service
+        from app.config.settings import settings
+        
+        if settings.USE_NEBULA_GRAPH:
+            try:
+                nebula_service = get_nebula_code_service(db)
+                files_result = await nebula_service.get_repository_files(
+                    repository_id=repo_id,
+                    language=None,
+                    page=1,
+                    page_size=10000  # 获取所有文件
+                )
+                logger.info(f"从 NebulaGraph 查询文件列表: repo_id={repo_id}, 文件数={files_result.get('total', 0)}")
+            except Exception as nebula_error:
+                logger.debug(f"从 NebulaGraph 查询文件列表失败（不影响统计信息）: {nebula_error}")
             
-            # 从数据库表获取统计信息
-            stats_result = db.execute(
-                text("""SELECT 
-                    COUNT(*) as total_files,
-                    SUM(lines_of_code) as total_lines,
-                    SUM(symbols_count) as total_symbols,
-                    COUNT(DISTINCT language) as language_count
-                FROM code_files 
-                WHERE repository_id = :repo_id"""),
-                {"repo_id": repo_id}
-            ).fetchone()
-            
-            # 获取语言分布
-            lang_result = db.execute(
-                text("""SELECT language, COUNT(*) as count, SUM(lines_of_code) as `lines`
-                FROM code_files 
-                WHERE repository_id = :repo_id AND language IS NOT NULL
-                GROUP BY language
-                ORDER BY count DESC"""),
-                {"repo_id": repo_id}
-            ).fetchall()
-            
-            languages = {row[0]: {"count": row[1], "lines": row[2]} for row in lang_result}
-            
-            # 调试日志：记录语言分布数据
-            if lang_result:
-                logger.info(f"语言分布统计: repo_id={repo_id}, 语言种类数={len(lang_result)}")
-                for lang, count, lines in lang_result[:5]:  # 只记录前5个
-                    logger.debug(f"  - {lang}: {count} 个文件, {lines} 行代码")
-            else:
-                logger.warning(f"语言分布数据为空: repo_id={repo_id}, 可能原因: 1) 文件未分析 2) language字段为NULL")
-            
-            # 从 code_symbols 表获取函数和类数量
-            symbol_stats_result = db.execute(
-                text("""SELECT 
-                    symbol_type,
-                    COUNT(*) as count
-                FROM code_symbols 
-                WHERE repository_id = :repo_id AND is_deleted = 0
-                GROUP BY symbol_type"""),
-                {"repo_id": repo_id}
-            ).fetchall()
-            
-            symbol_stats = {row[0]: row[1] for row in symbol_stats_result}
-            total_functions = symbol_stats.get('function', 0) + symbol_stats.get('method', 0)
-            total_classes = symbol_stats.get('class', 0)
-            
-            # 尝试从缓存获取 API 端点和数据库表统计（如果存在）
-            # 这些统计信息在分析时计算，存储在缓存中
-            api_stats = {"frontend": 0, "backend": 0}
-            database_tables = 0
-            
-            cache_result = db.execute(
-                text("""SELECT cache_data FROM code_analysis_cache 
-                WHERE repository_id = :repo_id AND cache_type = 'statistics' AND cache_key = 'full'
-                AND (expires_at IS NULL OR expires_at > NOW())
-                ORDER BY created_at DESC LIMIT 1"""),
-                {"repo_id": repo_id}
-            )
-            cached_stats = cache_result.fetchone()
-            
-            if cached_stats:
-                try:
-                    cached_data = json.loads(cached_stats[0])
-                    if 'api_endpoints' in cached_data:
-                        api_stats = cached_data['api_endpoints']
-                    if 'database_tables' in cached_data:
-                        database_tables = cached_data.get('database_tables', 0)
-                except Exception as e:
-                    logger.warning(f"解析缓存统计信息失败: {e}")
-            
-            # 构建完整的统计信息
-            statistics = {
-                "total_files": stats_result[0] or 0,
-                "total_lines": stats_result[1] or 0,
-                "total_symbols": stats_result[2] or 0,
-                "total_functions": total_functions,
-                "total_classes": total_classes,
-                "api_endpoints": api_stats,
-                "database_tables": database_tables,
-                "languages": languages
-            }
-            
-            # 转换为前端需要的格式
+            # 转换为前端需要的格式（如果没有文件数据，返回空列表）
             files = []
-            for file in files_result['files']:
-                files.append({
-                    "file_path": file.file_path,
-                    "file_name": file.file_name,
-                    "language": file.language,
-                    "lines": file.lines_of_code,
-                    "file_size": file.file_size,
-                    "complexity": {"cyclomatic": file.complexity_score or 0},
-                    "symbols_count": file.symbols_count,
-                    "imports_count": file.imports_count
-                })
+            # 注意：当从 code_repositories 表获取统计信息时，files_result['files'] 是空的
+            # 文件列表需要从 NebulaGraph 或缓存获取
+            if files_result.get('files'):
+                for file in files_result['files']:
+                    # 处理文件对象（可能是字典或对象）
+                    if isinstance(file, dict):
+                        files.append(file)
+                    else:
+                        files.append({
+                            "file_path": getattr(file, 'file_path', ''),
+                            "file_name": getattr(file, 'file_name', ''),
+                            "language": getattr(file, 'language', ''),
+                            "lines": getattr(file, 'lines_of_code', 0),
+                            "file_size": getattr(file, 'file_size', 0),
+                            "complexity": {"cyclomatic": getattr(file, 'complexity_score', 0) or 0},
+                            "symbols_count": getattr(file, 'symbols_count', 0),
+                            "imports_count": getattr(file, 'imports_count', 0)
+                        })
             
             return success_response({
                 "files": files,
@@ -530,19 +562,23 @@ async def analyze_code_structure(
 @router.get("/repositories/{repo_id}/dependencies")
 async def get_dependencies(
     repo_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    max_nodes: int = 500
 ):
     """
-    获取依赖关系图 - 仅从缓存读取
+    获取依赖关系图 - 从 NebulaGraph 查询
     
     Args:
         repo_id: 仓库ID
+        max_nodes: 最大节点数
         
     Returns:
-        依赖图（nodes + edges）或提示信息
+        依赖图（nodes + edges）
     """
     try:
         from app.models.code_repository import CodeRepository
+        from app.services.nebula_code_service import get_nebula_code_service
+        from app.config.settings import settings
         
         # 1. 检查仓库是否存在且未删除
         repo = db.query(CodeRepository).filter(CodeRepository.id == repo_id).first()
@@ -551,38 +587,35 @@ async def get_dependencies(
         if repo.is_deleted:
             return error_response("仓库正在删除或已删除，无法获取依赖关系")
         
-        # 2. 检查缓存
-        result = db.execute(
-            text("""SELECT cache_data FROM code_analysis_cache 
-            WHERE repository_id = :repo_id AND cache_type = 'dependencies' AND cache_key = 'graph'
-            AND (expires_at IS NULL OR expires_at > NOW())
-            ORDER BY created_at DESC LIMIT 1"""),
-            {"repo_id": repo_id}
-        )
-        cached = result.fetchone()
+        # 2. 如果 NebulaGraph 未启用，返回提示
+        if not settings.USE_NEBULA_GRAPH:
+            return success_response({
+                "nodes": [],
+                "edges": [],
+                "status": "nebula_disabled",
+                "message": "NebulaGraph 未启用，无法获取依赖关系图"
+            })
         
-        if cached:
-            logger.info(f"使用缓存的依赖图: repo_id={repo_id}")
-            return success_response(json.loads(cached[0]))
+        # 3. 从 NebulaGraph 查询依赖图
+        nebula_service = get_nebula_code_service(db)
         
-        # 2. 如果没有缓存，返回提示信息
-        repo = db.query(CodeRepository).filter(CodeRepository.id == repo_id).first()
-        if not repo:
-            return error_response("仓库不存在")
+        # 在异步函数中直接使用 await
+        graph_data = await nebula_service.get_dependency_graph(repo_id, max_nodes)
         
-        if not repo.local_path:
-            return error_response("仓库未克隆")
+        if not graph_data.get("nodes"):
+            # 如果没有数据，检查是否已同步到图谱
+            return success_response({
+                "nodes": [],
+                "edges": [],
+                "status": "not_synced",
+                "message": "依赖关系尚未同步到图谱，请等待分析完成或手动触发同步"
+            })
         
-        # 返回空数据，提示需要解析
-        return success_response({
-            "nodes": [],
-            "edges": [],
-            "status": "not_analyzed",
-            "message": "依赖关系尚未解析，请点击刷新按钮触发解析"
-        })
+        logger.info(f"[API] 从 NebulaGraph 获取依赖图: repo_id={repo_id}, nodes={len(graph_data.get('nodes', []))}, edges={len(graph_data.get('edges', []))}")
+        return success_response(graph_data)
     
     except Exception as e:
-        logger.error(f"获取依赖图失败: {e}")
+        logger.error(f"获取依赖图失败: {e}", exc_info=True)
         return error_response(f"获取依赖图失败: {str(e)}")
 
 
@@ -726,6 +759,8 @@ async def get_wiki_content(
             return error_response("仓库未克隆")
         
         # 2. 检查缓存（如果不强制刷新）
+        # 注意：即使 force_refresh=False，也要检查是否有任务正在运行
+        # 如果有任务正在运行，即使没有缓存，也应该等待任务完成而不是发送新任务
         if not force_refresh:
             result = db.execute(
                 text("""SELECT cache_data FROM code_analysis_cache 
@@ -740,43 +775,137 @@ async def get_wiki_content(
                 logger.info(f"使用缓存的 Wiki 内容: repo_id={repo_id}")
                 return success_response(json.loads(cached[0]))
         
-        # 3. 如果没有缓存或强制刷新，检查是否有正在运行的任务
-        # 使用 Redis 锁检查是否有任务正在运行（避免重复发送任务）
+        # 2.5. 检查是否有任务正在执行（即使没有缓存，也要避免重复发送任务）
         from app.core.cache import cache_manager
-        import asyncio
         
-        lock_key = f"wiki_generation_lock:{repo_id}"
-        
-        # 检查锁是否存在（如果有锁，说明有任务正在运行）
+        exec_lock_key = f"wiki_generation_lock:{repo_id}"
         try:
-            lock_exists = asyncio.run(cache_manager.exists(lock_key))
-            
-            if lock_exists:
-                # 已有任务正在运行，返回提示信息（不发送新任务）
-                logger.info(f"Wiki 生成任务已在运行中: repo_id={repo_id}")
+            exec_lock_exists = await cache_manager.exists(exec_lock_key)
+            if exec_lock_exists:
+                logger.info(f"Wiki 生成任务正在执行中: repo_id={repo_id}")
                 return success_response({
                     "repository_id": repo_id,
                     "status": "processing",
                     "message": "Wiki 内容正在生成中，请稍后刷新页面（检测到已有任务在运行）"
                 })
         except Exception as e:
-            # Redis 不可用时，继续发送任务（降级处理）
-            logger.warning(f"检查任务锁失败，继续发送任务: {e}")
+            logger.warning(f"检查任务执行锁失败: {e}")
         
-        # 发送异步任务
-        logger.info(f"发送 Wiki 内容生成任务: repo_id={repo_id}, force_refresh={force_refresh}")
-        task = celery_app.send_task(
-            'tasks.code_repository_tasks.generate_wiki_content',
-            args=[repo_id],
-            queue='code'  # 使用代码库任务队列
-        )
+        # 2.6. 再次检查缓存（可能在检查锁的瞬间缓存刚写入）
+        # 这是一个双重检查，避免在任务刚完成但锁还没释放时发送新任务
+        if not force_refresh:
+            result = db.execute(
+                text("""SELECT cache_data FROM code_analysis_cache 
+                WHERE repository_id = :repo_id AND cache_type = 'wiki_content' AND cache_key = 'full'
+                AND (expires_at IS NULL OR expires_at > NOW())
+                ORDER BY created_at DESC LIMIT 1"""),
+                {"repo_id": repo_id}
+            )
+            cached = result.fetchone()
+            
+            if cached:
+                logger.info(f"使用缓存的 Wiki 内容（二次检查）: repo_id={repo_id}")
+                cached_data = json.loads(cached[0])
+                # 记录关键字段用于调试
+                logger.info(f"[API] 📤 步骤6: 准备返回 Wiki 内容: repo_id={repo_id}")
+                logger.info(f"[API] 📤 步骤6.1: 从数据库读取的数据键: {list(cached_data.keys())}")
+                
+                if cached_data.get('getting_started'):
+                    run_cmd = cached_data['getting_started'].get('run_project_command', 'N/A')
+                    logger.info(f"[API] 📤 步骤6.2: getting_started.run_project_command: {run_cmd}")
+                    logger.info(f"[API] 📤 步骤6.2: getting_started 完整结构: prerequisites={len(cached_data['getting_started'].get('prerequisites', []))}, installation_steps={len(cached_data['getting_started'].get('installation_steps', []))}")
+                else:
+                    logger.warning(f"[API] ⚠️ 步骤6.2失败: getting_started 字段不存在")
+                
+                if cached_data.get('system_architecture'):
+                    arch = cached_data['system_architecture']
+                    logger.info(f"[API] 📤 步骤6.3: 验证 system_architecture")
+                    mermaid_api = arch.get('mermaid_api_diagram', '')
+                    logger.info(f"[API] 📤 步骤6.3.1: mermaid_api_diagram 类型: {type(mermaid_api).__name__}")
+                    logger.info(f"[API] 📤 步骤6.3.1: mermaid_api_diagram 长度: {len(mermaid_api)}")
+                    logger.info(f"[API] 📤 步骤6.3.1: mermaid_api_diagram（完整）: {repr(mermaid_api)}")
+                    if mermaid_api:
+                        # 提取实际代码
+                        api_code = mermaid_api.replace('```mermaid', '').replace('```', '').strip()
+                        logger.info(f"[API] 📤 步骤6.3.2: 清理后的代码长度: {len(api_code)}")
+                        logger.info(f"[API] 📤 步骤6.3.2: 清理后的代码（完整）: {repr(api_code)}")
+                        logger.info(f"[API] 📤 步骤6.3.2: 清理后的代码（按行）:")
+                        for i, line in enumerate(api_code.split('\n'), 1):
+                            logger.info(f"[API] 📤      行{i}: {repr(line)}")
+                    else:
+                        logger.warning(f"[API] ⚠️ 步骤6.3.1失败: mermaid_api_diagram 为空")
+                    logger.info(f"[API] 📤 步骤6.3.3: system_architecture 其他字段: functional_subsystems_table={len(arch.get('functional_subsystems_table', []))}, key_architectural_decisions={len(arch.get('key_architectural_decisions', []))}")
+                else:
+                    logger.warning(f"[API] ⚠️ 步骤6.3失败: system_architecture 字段不存在")
+                
+                logger.info(f"[API] 📤 步骤6.4: 准备返回数据，数据大小: {len(json.dumps(cached_data))} 字符")
+                return success_response(cached_data)
         
-        return success_response({
-            "task_id": task.id,
-            "repository_id": repo_id,
-            "status": "processing",
-            "message": "Wiki 内容正在生成中，请稍后刷新页面"
-        })
+        # 3. 如果没有缓存或强制刷新，使用原子锁机制避免重复发送任务
+        from app.core.cache import cache_manager
+        
+        lock_key = f"wiki_generation_send_lock:{repo_id}"  # 使用不同的锁键，避免与任务执行锁冲突
+        lock_timeout = 10  # 短超时（10秒），只用于防止重复发送任务
+        
+        # 尝试原子性地获取发送锁（如果获取失败，说明已有请求正在发送任务）
+        try:
+            lock_acquired = await cache_manager.acquire_lock(lock_key, timeout=lock_timeout)
+            
+            if not lock_acquired:
+                # 已有请求正在发送任务，返回提示信息（不发送新任务）
+                logger.info(f"Wiki 生成任务发送锁已被占用，可能有其他请求正在发送: repo_id={repo_id}")
+                # 检查是否有任务正在执行
+                exec_lock_key = f"wiki_generation_lock:{repo_id}"
+                exec_lock_exists = await cache_manager.exists(exec_lock_key)
+                if exec_lock_exists:
+                    return success_response({
+                        "repository_id": repo_id,
+                        "status": "processing",
+                        "message": "Wiki 内容正在生成中，请稍后刷新页面（检测到已有任务在运行）"
+                    })
+                else:
+                    # 锁被占用但任务未执行，可能是其他请求正在发送，稍等后重试
+                    return success_response({
+                        "repository_id": repo_id,
+                        "status": "processing",
+                        "message": "Wiki 内容正在生成中，请稍后刷新页面"
+                    })
+            
+            # 成功获取发送锁，发送任务后立即释放（任务内部会获取执行锁）
+            try:
+                # 发送异步任务
+                logger.info(f"发送 Wiki 内容生成任务: repo_id={repo_id}, force_refresh={force_refresh}")
+                task = celery_app.send_task(
+                    'tasks.code_repository_tasks.generate_wiki_content',
+                    args=[repo_id],
+                    queue='code'  # 使用代码库任务队列
+                )
+                
+                return success_response({
+                    "task_id": task.id,
+                    "repository_id": repo_id,
+                    "status": "processing",
+                    "message": "Wiki 内容正在生成中，请稍后刷新页面"
+                })
+            finally:
+                # 无论成功与否，都释放发送锁
+                await cache_manager.release_lock(lock_key)
+            
+        except Exception as e:
+            # Redis 不可用时，记录警告但继续发送任务（降级处理）
+            logger.warning(f"获取任务发送锁失败，继续发送任务（降级处理）: {e}")
+            # 降级：直接发送任务
+            task = celery_app.send_task(
+                'tasks.code_repository_tasks.generate_wiki_content',
+                args=[repo_id],
+                queue='code'
+            )
+            return success_response({
+                "task_id": task.id,
+                "repository_id": repo_id,
+                "status": "processing",
+                "message": "Wiki 内容正在生成中，请稍后刷新页面"
+            })
     
     except Exception as e:
         logger.error(f"获取 Wiki 内容失败: {e}", exc_info=True)
@@ -888,8 +1017,17 @@ async def list_code_files(
         文件列表（分页）
     """
     try:
-        file_service = get_code_file_service(db)
-        result = file_service.list_files(
+        # ========== 已优化：从 NebulaGraph 查询文件列表 ==========
+        # 从 NebulaGraph 查询文件列表
+        from app.services.nebula_code_service import get_nebula_code_service
+        from app.config.settings import settings
+        
+        if not settings.USE_NEBULA_GRAPH:
+            return error_response("NebulaGraph 未启用，无法获取文件列表")
+        
+        nebula_service = get_nebula_code_service(db)
+        # 在异步函数中直接使用 await
+        result = await nebula_service.get_repository_files(
             repository_id=repo_id,
             language=language,
             page=page,
@@ -924,6 +1062,67 @@ async def list_code_files(
         return error_response(f"获取文件列表失败: {str(e)}")
 
 
+@router.get("/files/{file_path:path}/content")
+async def get_file_content(
+    file_path: str,
+    repository_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    获取代码文件内容
+    
+    Args:
+        file_path: 文件相对路径
+        repository_id: 仓库ID
+        
+    Returns:
+        文件内容
+    """
+    try:
+        from app.models.code_repository import CodeRepository
+        import os
+        
+        # 获取仓库路径
+        repo = db.query(CodeRepository).filter(CodeRepository.id == repository_id).first()
+        
+        if not repo or not repo.local_path:
+            return error_response("仓库未克隆")
+        
+        # 构建完整路径
+        full_path = os.path.join(repo.local_path, file_path)
+        
+        if not os.path.exists(full_path):
+            return error_response("文件不存在")
+        
+        # 检查是否是文件（不是目录）
+        if not os.path.isfile(full_path):
+            return error_response("路径不是文件")
+        
+        # 读取文件内容
+        try:
+            with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            
+            # 限制文件大小（超过 1MB 的文件只返回前 1MB）
+            max_size = 1024 * 1024  # 1MB
+            if len(content) > max_size:
+                content = content[:max_size] + "\n\n... (文件过大，已截断)"
+            
+            return success_response({
+                "file_path": file_path,
+                "content": content,
+                "size": len(content),
+                "truncated": len(content) > max_size
+            })
+        except Exception as e:
+            logger.error(f"读取文件内容失败: {e}")
+            return error_response(f"读取文件内容失败: {str(e)}")
+    
+    except Exception as e:
+        logger.error(f"获取文件内容失败: {e}")
+        return error_response(f"获取文件内容失败: {str(e)}")
+
+
 @router.get("/files/{file_id}")
 async def get_code_file(
     file_id: int,
@@ -939,8 +1138,19 @@ async def get_code_file(
         文件详情
     """
     try:
-        file_service = get_code_file_service(db)
-        code_file = file_service.get_file(file_id)
+        # ========== 已优化：从 NebulaGraph 查询文件详情 ==========
+        # 从 NebulaGraph 查询文件详情（file_id 现在是 VID）
+        from app.services.nebula_code_service import get_nebula_code_service
+        from app.config.settings import settings
+        
+        if not settings.USE_NEBULA_GRAPH:
+            return error_response("NebulaGraph 未启用，无法获取文件详情")
+        
+        nebula_service = get_nebula_code_service(db)
+        # 在异步函数中直接使用 await
+        # file_id 现在是 VID（如 code_file_xxxxx）
+        file_vid = file_id if isinstance(file_id, str) and file_id.startswith('code_file_') else f"code_file_{file_id}"
+        code_file = await nebula_service.get_file_by_vid(file_vid)
         
         if not code_file:
             return error_response("文件不存在")
@@ -1260,7 +1470,117 @@ async def search_symbols(
 
 
 # =============================================
-# 11. 知识库关联 API
+# 11. 代码查询 API（基于 NebulaGraph）
+# =============================================
+
+@router.get("/query/call-chain")
+async def query_call_chain(
+    repository_id: int,
+    source: str,
+    target: str,
+    max_hops: int = 3,
+    db: Session = Depends(get_db)
+):
+    """
+    查询调用链（从源符号到目标符号的调用路径）
+    
+    Args:
+        repository_id: 仓库ID
+        source: 源符号名称或文件路径
+        target: 目标符号名称或文件路径
+        max_hops: 最大跳数
+        
+    Returns:
+        调用链路径列表
+    """
+    try:
+        from app.models.code_repository import CodeRepository
+        from app.services.nebula_code_service import get_nebula_code_service
+        from app.config.settings import settings
+        
+        # 1. 检查仓库是否存在
+        repo = db.query(CodeRepository).filter(CodeRepository.id == repository_id).first()
+        if not repo:
+            return error_response("仓库不存在")
+        if repo.is_deleted:
+            return error_response("仓库正在删除或已删除，无法查询")
+        
+        # 2. 如果 NebulaGraph 未启用，返回提示
+        if not settings.USE_NEBULA_GRAPH:
+            return error_response("NebulaGraph 未启用，无法查询调用链")
+        
+        # 3. 从 NebulaGraph 查询调用链
+        nebula_service = get_nebula_code_service(db)
+        
+        # 在异步函数中直接使用 await
+        result = await nebula_service.query_call_chain(
+            repository_id=repository_id,
+            source=source,
+            target=target,
+            max_hops=max_hops
+        )
+        return success_response(result)
+    
+    except Exception as e:
+        logger.error(f"查询调用链失败: {e}", exc_info=True)
+        return error_response(f"查询调用链失败: {str(e)}")
+
+
+@router.get("/query/dependency-path")
+async def query_dependency_path(
+    repository_id: int,
+    source: str,
+    target: str,
+    max_hops: int = 3,
+    db: Session = Depends(get_db)
+):
+    """
+    查询依赖路径（从源文件到目标文件的依赖路径）
+    
+    Args:
+        repository_id: 仓库ID
+        source: 源文件路径
+        target: 目标文件路径
+        max_hops: 最大跳数
+        
+    Returns:
+        依赖路径列表
+    """
+    try:
+        from app.models.code_repository import CodeRepository
+        from app.services.nebula_code_service import get_nebula_code_service
+        from app.config.settings import settings
+        
+        # 1. 检查仓库是否存在
+        repo = db.query(CodeRepository).filter(CodeRepository.id == repository_id).first()
+        if not repo:
+            return error_response("仓库不存在")
+        if repo.is_deleted:
+            return error_response("仓库正在删除或已删除，无法查询")
+        
+        # 2. 如果 NebulaGraph 未启用，返回提示
+        if not settings.USE_NEBULA_GRAPH:
+            return error_response("NebulaGraph 未启用，无法查询依赖路径")
+        
+        # 3. 从 NebulaGraph 查询依赖路径
+        nebula_service = get_nebula_code_service(db)
+        
+        # 在异步函数中直接使用 await
+        result = await nebula_service.query_dependency_path(
+            repository_id=repository_id,
+            source=source,
+            target=target,
+            max_hops=max_hops
+        )
+        return success_response(result)
+    
+    except Exception as e:
+        logger.error(f"查询依赖路径失败: {e}", exc_info=True)
+        return error_response(f"查询依赖路径失败: {str(e)}")
+
+
+# =============================================
+# 12. 知识库关联 API
 # =============================================
 
 @router.post("/repositories/{repo_id}/link-kb")

@@ -285,24 +285,28 @@ const handleDelete = async (row: any) => {
         // 立即刷新列表（仓库状态会更新，is_deleted 会被设置为 true）
         await loadRepositories()
         
-        // 可选：轮询任务状态（每2秒检查一次，最多30秒）
+        // 轮询任务状态（每2秒检查一次，最多60秒）
+        // 后端删除任务完成后会物理删除仓库记录，仓库会从列表中消失
         let pollCount = 0
-        const maxPolls = 15
+        const maxPolls = 30  // 增加到30次，共60秒
         const pollInterval = setInterval(async () => {
           pollCount++
           await loadRepositories()
           
-          // 检查仓库是否已删除（从列表中消失或 is_deleted 为 true）
+          // 检查仓库是否已从列表中消失（物理删除后不再出现在列表中）
           const repo = repositories.value.find(r => r.id === row.id)
-          const stillExists = repo && !repo.is_deleted
+          const stillExists = !!repo  // 只要仓库还在列表中，就认为还存在
           
-          if (!stillExists || pollCount >= maxPolls) {
+          if (!stillExists) {
+            // 仓库已从列表中消失，说明删除完成
             clearInterval(pollInterval)
             deletingRepoIds.value.delete(row.id)  // 移除删除标记
-            
-            if (!stillExists) {
-              ElMessage.success('仓库删除完成')
-            }
+            ElMessage.success('仓库删除完成')
+          } else if (pollCount >= maxPolls) {
+            // 达到最大轮询次数，停止轮询
+            clearInterval(pollInterval)
+            deletingRepoIds.value.delete(row.id)  // 移除删除标记
+            ElMessage.warning('删除任务可能需要更长时间，请稍后刷新页面查看最新状态')
           }
         }, 2000)
       } else {

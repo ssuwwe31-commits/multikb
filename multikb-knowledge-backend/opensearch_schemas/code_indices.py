@@ -40,6 +40,10 @@ CODE_FILES_INDEX_CONFIG: Dict[str, Any] = {
             "file_id": {
                 "type": "integer"
             },
+            "file_vid": {
+                "type": "keyword",
+                "index": True
+            },
             "repository_id": {
                 "type": "integer"
             },
@@ -115,6 +119,9 @@ CODE_FILES_INDEX_CONFIG: Dict[str, Any] = {
             "content_hash": {
                 "type": "keyword"
             },
+            "processed_content_hash": {
+                "type": "keyword"
+            },
             "created_at": {
                 "type": "date"
             },
@@ -160,8 +167,16 @@ CODE_SYMBOLS_INDEX_CONFIG: Dict[str, Any] = {
             "symbol_id": {
                 "type": "integer"
             },
+            "symbol_vid": {
+                "type": "keyword",
+                "index": True
+            },
             "file_id": {
                 "type": "integer"
+            },
+            "file_vid": {
+                "type": "keyword",
+                "index": True
             },
             "repository_id": {
                 "type": "integer"
@@ -252,6 +267,9 @@ CODE_SYMBOLS_INDEX_CONFIG: Dict[str, Any] = {
             },
             
             # 元数据
+            "content_hash": {
+                "type": "keyword"
+            },
             "created_at": {
                 "type": "date"
             },
@@ -412,17 +430,23 @@ async def init_code_indices(opensearch_client):
                 logger.warning(f"读取代码符号索引 settings 失败: {_e}")
         else:
             logger.info(f"代码符号索引已存在: {CODE_SYMBOLS_INDEX}")
-            # 兜底：若 knn 未开启，则在线开启（参考 documents 和 images 索引的处理方式）
+            # 检查 KNN 状态（只检查，不尝试修改，因为 index.knn 不是动态设置）
             try:
                 settings_res = opensearch_client.indices.get_settings(index=CODE_SYMBOLS_INDEX)
                 knn_flag = settings_res.get(CODE_SYMBOLS_INDEX, {}).get('settings', {}).get('index', {}).get('knn')
-                if not (str(knn_flag).lower() == 'true'):
-                    opensearch_client.indices.put_settings(index=CODE_SYMBOLS_INDEX, body={"index.knn": True})
-                    logger.info(f"代码符号索引检测到 knn 未开启，已自动开启: {CODE_SYMBOLS_INDEX}")
-                else:
+                if str(knn_flag).lower() == 'true':
                     logger.info(f"代码符号索引 knn 已开启: {CODE_SYMBOLS_INDEX}")
+                else:
+                    logger.warning(
+                        f"⚠️ 代码符号索引 KNN 未开启: {CODE_SYMBOLS_INDEX}\n"
+                        f"   影响：向量搜索功能将无法正常工作\n"
+                        f"   原因：index.knn 需要在创建索引时设置，无法动态修改\n"
+                        f"   修复：运行以下命令重建索引（会丢失现有数据，需要重新索引）：\n"
+                        f"         cd multikb-knowledge-backend && python scripts/init_code_indices.py\n"
+                        f"   或者：手动删除索引后重新创建（确保配置中包含 'index.knn': True）"
+                    )
             except Exception as _e:
-                logger.warning(f"代码符号索引 knn 设置检查/开启失败: {_e}")
+                logger.debug(f"代码符号索引 knn 状态检查失败: {_e}")
         
         return True
         

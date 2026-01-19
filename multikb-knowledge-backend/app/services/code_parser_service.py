@@ -4,6 +4,8 @@
 """
 
 import os
+import threading
+import warnings
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 
@@ -11,18 +13,24 @@ from tree_sitter import Language, Parser, Node
 
 from app.core.logging import logger
 
+# 抑制 tree-sitter 的 FutureWarning
+warnings.filterwarnings("ignore", category=FutureWarning, module="tree_sitter")
+
 # 尝试导入语言库
 try:
     from tree_sitter_languages import get_language, get_parser
     LANGUAGES_AVAILABLE = True
-    logger.info("tree-sitter-languages 已加载")
 except ImportError:
     logger.warning("tree_sitter_languages 未安装，代码解析功能将不可用")
     LANGUAGES_AVAILABLE = False
 
 
 class CodeParserService:
-    """代码解析服务（使用 Tree-sitter）"""
+    """代码解析服务（使用 Tree-sitter，单例模式）"""
+    
+    _instance = None
+    _lock = threading.Lock()
+    _initialized = False
     
     # 支持的语言
     SUPPORTED_LANGUAGES = {
@@ -31,17 +39,39 @@ class CodeParserService:
         'typescript': ['.ts', '.tsx']
     }
     
+    def __new__(cls):
+        """单例模式实现"""
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super(CodeParserService, cls).__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance
+    
     def __init__(self):
-        """初始化解析器"""
-        self.parsers = {}
-        self._init_parsers()
-        logger.info(f"代码解析服务初始化完成，支持语言: {list(self.parsers.keys())}")
+        """初始化解析器（仅执行一次）"""
+        if self._initialized:
+            return
+        
+        with self._lock:
+            if self._initialized:
+                return
+            
+            self.parsers = {}
+            self._init_parsers()
+            logger.info(f"代码解析服务初始化完成，支持语言: {list(self.parsers.keys())}")
+            self._initialized = True
     
     def _init_parsers(self):
         """初始化 Tree-sitter 解析器"""
         if not LANGUAGES_AVAILABLE:
             logger.error("tree-sitter-languages 未安装，请运行: pip install tree-sitter-languages")
             return
+        
+        # 只在第一次初始化时记录日志
+        if not hasattr(CodeParserService, '_languages_loaded'):
+            logger.info("tree-sitter-languages 已加载")
+            CodeParserService._languages_loaded = True
         
         try:
             # Python 解析器

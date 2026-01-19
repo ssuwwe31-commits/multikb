@@ -184,7 +184,13 @@ class Settings(BaseSettings):
     RERANK_MODEL_PATH: Optional[str] = str((_PROJECT_ROOT / "models" / "rerank").resolve())  # 本地模型目录，默认指向项目 models/rerank
     RERANK_TOP_K: int = 5  # rerank后返回的结果数量（默认5个）
     RERANK_DEVICE: str = "cpu"  # rerank模型运行设备（cpu/cuda，如果配置为cuda但GPU不可用，会自动降级到cpu）
-    RERANK_MIN_SCORE: float = 0.5  # rerank 后端最小得分过滤（0-1），业界建议0.4-0.5，设置为0.5以提升结果质量
+    RERANK_MIN_SCORE: float = 0.5  # rerank 后端最小得分过滤（0-1），业界建议0.4-0.5，设置为0.5以提升结果质量（可通过 .env 文件配置）
+    
+    # 远程 Xinference Rerank 配置（优先使用远程，如果可用）
+    RERANK_XINFERENCE_ENABLED: bool = False  # 是否启用远程 Xinference rerank
+    RERANK_XINFERENCE_BASE_URL: Optional[str] = None  # 远程 Xinference 服务地址，例如: http://192.168.131.158:9997
+    RERANK_XINFERENCE_MODEL_NAME: str = "bge-reranker-v2-m3"  # Xinference 中的模型名称
+    RERANK_XINFERENCE_TIMEOUT: int = 30  # 请求超时时间（秒）
     # 混合搜索向量权重 α（关键词权重为 1-α）
     # 设置为0.5表示向量和BM25权重平衡，既考虑语义相似度，也重视精确匹配
     SEARCH_HYBRID_ALPHA: float = 0.5

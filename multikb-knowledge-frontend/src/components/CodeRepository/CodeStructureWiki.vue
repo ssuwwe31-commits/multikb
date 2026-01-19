@@ -183,6 +183,29 @@
             
             <!-- 功能子系统表格 -->
             <h3>功能子系统</h3>
+            <el-alert
+              v-if="hasUnmatchedSubsystems"
+              type="warning"
+              :closable="false"
+              style="margin-bottom: 16px"
+            >
+              <template #title>
+                <span>部分子系统路径未匹配</span>
+              </template>
+              <template #default>
+                <div style="font-size: 13px; line-height: 1.6">
+                  <p>以下子系统的前端路径或后端路由显示为"无"，可能原因：</p>
+                  <ul style="margin: 8px 0; padding-left: 20px">
+                    <li>子系统职责描述不够具体，无法提取有效的前端/后端关键词</li>
+                    <li>service_files 中的文件路径不包含明确的前端/后端标识</li>
+                    <li>项目结构特殊，不符合常见的目录命名规范</li>
+                  </ul>
+                  <p style="margin-top: 8px; color: #909399">
+                    提示：可以在日志中查看详细的匹配信息和可用的前端路径、后端路由列表
+                  </p>
+                </div>
+              </template>
+            </el-alert>
             <el-table 
               v-if="systemArchitecture?.functional_subsystems_table" 
               :data="systemArchitecture.functional_subsystems_table" 
@@ -190,16 +213,50 @@
               style="width: 100%; margin-top: 16px"
             >
               <el-table-column prop="subsystem_name" label="子系统名称" width="200" />
-              <el-table-column prop="frontend_path" label="前端路径" width="200" />
-              <el-table-column prop="backend_route" label="后端路由" width="200" />
+              <el-table-column prop="frontend_path" label="前端路径" width="200">
+                <template #default="{ row }">
+                  <span v-if="row.frontend_path === '无'" style="color: #909399; font-style: italic">
+                    {{ row.frontend_path }}
+                  </span>
+                  <span v-else>{{ row.frontend_path }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="backend_route" label="后端路由" width="200">
+                <template #default="{ row }">
+                  <span v-if="row.backend_route === '无'" style="color: #909399; font-style: italic">
+                    {{ row.backend_route }}
+                  </span>
+                  <span v-else>{{ row.backend_route }}</span>
+                </template>
+              </el-table-column>
               <el-table-column prop="service_files" label="服务文件">
                 <template #default="{ row }">
-                  <span v-for="(file, idx) in row.service_files" :key="idx">
-                    {{ file }}<span v-if="idx < row.service_files.length - 1">, </span>
+                  <span v-if="!row.service_files || row.service_files.length === 0" style="color: #909399; font-style: italic">
+                    无
+                  </span>
+                  <span v-else>
+                    <span v-for="(file, idx) in row.service_files" :key="idx">
+                      {{ file }}<span v-if="idx < row.service_files.length - 1">, </span>
+                    </span>
                   </span>
                 </template>
               </el-table-column>
-              <el-table-column prop="key_responsibilities" label="关键职责" min-width="300" />
+              <el-table-column prop="key_responsibilities" label="关键职责" min-width="300">
+                <template #default="{ row }">
+                  <div>
+                    <span>{{ row.key_responsibilities }}</span>
+                    <el-tooltip
+                      v-if="row.frontend_path === '无' && row.backend_route === '无' && row.key_responsibilities && row.key_responsibilities.length < 50"
+                      content="职责描述过短，可能无法提取有效的前端/后端关键词"
+                      placement="top"
+                    >
+                      <el-icon style="margin-left: 4px; color: #e6a23c; cursor: help">
+                        <WarningFilled />
+                      </el-icon>
+                    </el-tooltip>
+                  </div>
+                </template>
+              </el-table-column>
             </el-table>
             
             <!-- Mermaid 数据流图 -->
@@ -570,8 +627,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
-// 不再需要 Search 图标
 import { ElMessage } from 'element-plus'
+import { WarningFilled } from '@element-plus/icons-vue'
 import * as codeRepositoryApi from '@/api/modules/code-repository'
 import type { CodeRepository, CodeStructure, WikiContent } from '@/api/modules/code-repository'
 
@@ -750,42 +807,68 @@ const handleCodeSmellsPageChange = (val: number) => {
 const wikiContent = ref<WikiContent | null>(null)
 const wikiLoading = ref(false)
 
+// 防抖：避免频繁调用
+let loadWikiContentTimer: NodeJS.Timeout | null = null
 const loadWikiContent = async (forceRefresh = false) => {
   if (wikiContent.value && !forceRefresh) return // 已加载且不强制刷新
   
-  wikiLoading.value = true
-  try {
-    const res = await codeRepositoryApi.getWikiContent(props.repoId, forceRefresh)
-    
-    if (res.data) {
-      // 检查是否是 WikiContent 类型（有 project_overview 字段）
-      if ('project_overview' in res.data) {
-        // 直接返回缓存的内容
-        wikiContent.value = res.data as WikiContent
-      } else if ('status' in res.data && res.data.status === 'processing') {
-        // 任务正在生成中，等待后重试（只重试一次）
-        ElMessage.info('Wiki 内容正在生成中，请稍候...')
-        await new Promise(resolve => setTimeout(resolve, 3000)) // 等待3秒
-        // 再次调用，此时应该已经有缓存了
-        const retryRes = await codeRepositoryApi.getWikiContent(props.repoId, false)
-        if (retryRes.data && 'project_overview' in retryRes.data) {
-          wikiContent.value = retryRes.data as WikiContent
+  // 如果正在加载，取消之前的请求
+  if (wikiLoading.value) {
+    return
+  }
+  
+  // 防抖：如果最近调用过，等待一段时间再调用
+  if (loadWikiContentTimer) {
+    clearTimeout(loadWikiContentTimer)
+  }
+  
+  loadWikiContentTimer = setTimeout(async () => {
+    wikiLoading.value = true
+    try {
+      const res = await codeRepositoryApi.getWikiContent(props.repoId, forceRefresh)
+      
+      if (res.data) {
+        // 检查是否是 WikiContent 类型（有 project_overview 字段）
+        if ('project_overview' in res.data) {
+          // 直接返回缓存的内容
+          wikiContent.value = res.data as WikiContent
+          console.log('[CodeStructureWiki] ✅ Wiki 内容加载成功')
+          console.log('[CodeStructureWiki] 📦 完整响应数据:', JSON.stringify(res.data, null, 2).substring(0, 1000) + '...')
+          console.log('[CodeStructureWiki] getting_started:', wikiContent.value?.getting_started)
+          console.log('[CodeStructureWiki] getting_started 类型:', typeof wikiContent.value?.getting_started)
+          console.log('[CodeStructureWiki] run_project_command:', wikiContent.value?.getting_started?.run_project_command)
+          console.log('[CodeStructureWiki] run_project_command 类型:', typeof wikiContent.value?.getting_started?.run_project_command)
+          console.log('[CodeStructureWiki] run_project_command 长度:', wikiContent.value?.getting_started?.run_project_command?.length || 0)
+          console.log('[CodeStructureWiki] system_architecture:', wikiContent.value?.system_architecture ? '存在' : '不存在')
+          if (wikiContent.value?.system_architecture) {
+            console.log('[CodeStructureWiki] system_architecture 类型:', typeof wikiContent.value.system_architecture)
+            console.log('[CodeStructureWiki] mermaid_api_diagram 存在:', !!wikiContent.value.system_architecture.mermaid_api_diagram)
+            console.log('[CodeStructureWiki] mermaid_api_diagram 长度:', wikiContent.value.system_architecture.mermaid_api_diagram?.length || 0)
+            console.log('[CodeStructureWiki] mermaid_api_diagram 前200字符:', wikiContent.value.system_architecture.mermaid_api_diagram?.substring(0, 200) || 'N/A')
+            console.log('[CodeStructureWiki] mermaid_api_diagram 完整内容:', wikiContent.value.system_architecture.mermaid_api_diagram)
+          } else {
+            console.warn('[CodeStructureWiki] ⚠️ system_architecture 不存在')
+          }
+        } else if ('status' in res.data && res.data.status === 'processing') {
+          // 任务正在生成中，不立即重试，避免重复发送任务
+          ElMessage.info('Wiki 内容正在生成中，请稍候...')
+          // 不再自动重试，让用户手动刷新或等待任务完成
+          // 前端可以通过轮询或其他方式检查任务状态
         } else {
-          ElMessage.warning('Wiki 内容生成中，请稍后刷新页面')
+          throw new Error('API 返回数据格式错误')
         }
       } else {
-        throw new Error('API 返回数据格式错误')
+        throw new Error('API 返回数据为空')
       }
-    } else {
-      throw new Error('API 返回数据为空')
+    } catch (error: any) {
+      console.error('加载 Wiki 内容失败:', error)
+      ElMessage.error('加载 Wiki 内容失败: ' + (error.message || '未知错误'))
+      throw error // 直接抛出错误，不降级
+    } finally {
+      wikiLoading.value = false
+      loadWikiContentTimer = null
     }
-  } catch (error: any) {
-    console.error('加载 Wiki 内容失败:', error)
-    ElMessage.error('加载 Wiki 内容失败: ' + (error.message || '未知错误'))
-    throw error // 直接抛出错误，不降级
-  } finally {
-    wikiLoading.value = false
-  }
+  }, 500) // 防抖延迟500ms
 }
 
 // 项目概述
@@ -793,9 +876,22 @@ const projectOverview = computed(() => {
   return wikiContent.value?.project_overview || ''
 })
 
-// 组件表格（更智能的分析）
+// 组件表格（优先使用 Wiki 内容中的 core_components，如果没有则从文件列表计算）
 const componentsTable = computed(() => {
-  if (!props.codeStructure?.files) return []
+  // 优先使用 Wiki 内容中的核心组件
+  if (wikiContent.value?.core_components && wikiContent.value.core_components.length > 0) {
+    return wikiContent.value.core_components.map((comp: any) => ({
+      name: comp.name || '',
+      purpose: comp.purpose || '',
+      files: comp.files_count || 0,
+      lines: comp.lines_count || 0,
+      symbols: comp.symbols_count || 0,
+      languages: comp.languages ? (Array.isArray(comp.languages) ? comp.languages.join(', ') : comp.languages) : ''
+    }))
+  }
+  
+  // 降级：从文件列表计算
+  if (!props.codeStructure?.files || props.codeStructure.files.length === 0) return []
   
   // 按目录分组（支持多级目录）
   const dirMap = new Map<string, any>()
@@ -879,9 +975,59 @@ function analyzeComponentPurpose(name: string, stats: any): string {
   return getComponentPurpose(name.split('/')[0] || name)
 }
 
-// 技术栈
+// 技术栈（优先使用 Wiki 内容中的 technology_stack，如果没有则从文件列表计算）
 const techStack = computed(() => {
-  if (!props.codeStructure?.files) return []
+  // 优先使用 Wiki 内容中的技术栈
+  if (wikiContent.value?.technology_stack) {
+    const tech = wikiContent.value.technology_stack
+    const result: Array<{ name: string; items: string[] }> = []
+    
+    // 编程语言（从 statistics 或文件列表获取）
+    const languages: string[] = []
+    if (props.codeStructure?.statistics?.languages) {
+      languages.push(...Object.keys(props.codeStructure.statistics.languages))
+    } else if (props.codeStructure?.files) {
+      const langSet = new Set<string>()
+      props.codeStructure.files.forEach(file => {
+        if (file.language) langSet.add(file.language)
+      })
+      languages.push(...Array.from(langSet))
+    }
+    
+    if (languages.length > 0) {
+      result.push({
+        name: '编程语言',
+        items: languages
+      })
+    }
+    
+    // 框架和工具（从 key_dependencies_table 获取）
+    if (tech.key_dependencies_table && Array.isArray(tech.key_dependencies_table) && tech.key_dependencies_table.length > 0) {
+      const frameworks = tech.key_dependencies_table.map((dep: any) => {
+        const name = dep.name || ''
+        const purpose = dep.purpose || ''
+        return purpose ? `${name}: ${purpose}` : name
+      })
+      result.push({
+        name: '框架和工具',
+        items: frameworks
+      })
+    } else {
+      // 降级：从文件列表检测框架
+      const frameworks = detectFrameworks()
+      if (frameworks.length > 0) {
+        result.push({
+          name: '框架和工具',
+          items: frameworks
+        })
+      }
+    }
+    
+    return result
+  }
+  
+  // 降级：从文件列表计算
+  if (!props.codeStructure?.files || props.codeStructure.files.length === 0) return []
   
   const languages = new Set<string>()
   props.codeStructure.files.forEach(file => {
@@ -922,6 +1068,14 @@ const directoryTable = computed(() => {
 // 系统架构（从 Wiki 内容获取）
 const systemArchitecture = computed(() => {
   return wikiContent.value?.system_architecture
+})
+
+// 检查是否有未匹配的子系统
+const hasUnmatchedSubsystems = computed(() => {
+  if (!systemArchitecture.value?.functional_subsystems_table) return false
+  return systemArchitecture.value.functional_subsystems_table.some(
+    (sub: any) => sub.frontend_path === '无' || sub.backend_route === '无'
+  )
 })
 
 // 架构概述
@@ -1064,7 +1218,13 @@ const componentRelationships = computed(() => {
 // 前置要求
 // 获取快速开始数据（优先使用 LLM 生成的数据）
 const gettingStartedData = computed(() => {
-  return props.wikiContent?.getting_started
+  // 注意：应该使用 wikiContent.value 而不是 props.wikiContent
+  const data = wikiContent.value?.getting_started
+  console.log('[CodeStructureWiki] gettingStartedData:', data)
+  if (data?.run_project_command) {
+    console.log('[CodeStructureWiki] run_project_command 值:', data.run_project_command)
+  }
+  return data
 })
 
 const prerequisites = computed(() => {
@@ -1119,10 +1279,43 @@ const getMethodTagType = (method: string) => {
 
 // 运行指令
 const runInstructions = computed(() => {
+  console.log('[CodeStructureWiki] 🔄 runInstructions computed 被调用')
+  console.log('[CodeStructureWiki] wikiContent.value:', wikiContent.value)
+  console.log('[CodeStructureWiki] wikiContent.value?.getting_started:', wikiContent.value?.getting_started)
+  
+  // 优先使用 Wiki 内容中的 run_project_command
+  // 注意：应该使用 wikiContent.value 而不是 props.wikiContent
+  if (wikiContent.value?.getting_started?.run_project_command) {
+    const command = wikiContent.value.getting_started.run_project_command
+    console.log('[CodeStructureWiki] ✅ run_project_command 从 wikiContent 获取:', command)
+    console.log('[CodeStructureWiki] command 类型:', typeof command)
+    console.log('[CodeStructureWiki] command 长度:', command?.length)
+    console.log('[CodeStructureWiki] command 是否包含"根据项目类型":', command?.includes('根据项目类型'))
+    // 如果命令不是占位符，直接使用
+    if (command && !command.includes('根据项目类型') && command.trim().length > 3) {
+      console.log('[CodeStructureWiki] ✅ 使用有效的 run_project_command:', command)
+      const result = `# 运行项目\n${command}`
+      console.log('[CodeStructureWiki] 返回结果:', result)
+      return result
+    } else {
+      console.warn('[CodeStructureWiki] ⚠️ run_project_command 是占位符或过短:', command)
+      console.warn('[CodeStructureWiki] 将使用推断逻辑')
+    }
+  } else {
+    console.log('[CodeStructureWiki] ℹ️ wikiContent.getting_started.run_project_command 不存在，使用推断逻辑')
+    console.log('[CodeStructureWiki] wikiContent.value 存在:', !!wikiContent.value)
+    console.log('[CodeStructureWiki] getting_started 存在:', !!wikiContent.value?.getting_started)
+    if (wikiContent.value?.getting_started) {
+      console.log('[CodeStructureWiki] getting_started 的键:', Object.keys(wikiContent.value.getting_started))
+    }
+  }
+  
+  // 如果没有 codeStructure，返回默认值
   if (!props.codeStructure?.files) {
     return '# 安装依赖\nnpm install\n# 或\npip install -r requirements.txt\n\n# 运行项目\nnpm start\n# 或\npython main.py'
   }
   
+  // 根据项目类型推断
   const filePaths = props.codeStructure.files.map(f => f.file_path.toLowerCase())
   
   if (filePaths.some(p => p.includes('package.json'))) {
@@ -1298,6 +1491,69 @@ function renderMermaid(mermaidCode: string): string {
   return ''
 }
 
+// 修复 Mermaid 代码语法错误
+function fixMermaidCode(code: string): string {
+  if (!code) return code
+  
+  const lines = code.split('\n')
+  const fixedLines: string[] = []
+  
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i].trim()
+    if (!line) continue
+    
+    // 跳过注释行
+    if (line.startsWith('#') || line.startsWith('//')) {
+      continue
+    }
+    
+    // 修复不完整的箭头
+    if (line.includes('->') && !line.includes('-->')) {
+      // 检查是否是不完整的箭头（以箭头结尾）
+      if (line.endsWith('->') || line.endsWith('-->')) {
+        console.warn(`[CodeStructureWiki] ⚠️ 跳过不完整的箭头（第${i+1}行）: ${line}`)
+        continue
+      }
+      // 将 `->` 替换为 `-->`
+      line = line.replace(/ -> /g, ' --> ').replace(/->/g, ' --> ')
+    }
+    
+    // 修复被截断的节点（如 `A -> B[/api/c`）
+    if (line.includes('[') && !line.includes(']')) {
+      console.warn(`[CodeStructureWiki] ⚠️ 跳过被截断的节点（第${i+1}行）: ${line}`)
+      continue
+    }
+    
+    // 修复节点标签中的引号问题
+    // 确保节点标签用双引号包裹
+    line = line.replace(/(\w+)\[([^\]]+)\]/g, (match, id, label) => {
+      // 移除现有的引号
+      label = label.replace(/^["']|["']$/g, '')
+      // 转义内部的双引号
+      label = label.replace(/"/g, "'")
+      // 如果标签太长，截断
+      if (label.length > 50) {
+        label = label.substring(0, 47) + '...'
+      }
+      return `${id}["${label}"]`
+    })
+    
+    fixedLines.push(line)
+  }
+  
+  let fixedCode = fixedLines.join('\n')
+  
+  // 确保有图表类型声明
+  if (!fixedCode.match(/^(graph|sequenceDiagram|flowchart|classDiagram|stateDiagram|erDiagram|gantt|pie|gitgraph|journey|requirement)/)) {
+    // 如果没有，添加默认的 graph LR
+    fixedCode = 'graph LR\n' + fixedCode
+    console.warn('[CodeStructureWiki] ⚠️ 缺少图表类型声明，已添加 graph LR')
+  }
+  
+  console.log('[CodeStructureWiki] ✅ Mermaid 代码修复完成，行数:', fixedLines.length)
+  return fixedCode
+}
+
 // 渲染所有 Mermaid 图表
 async function renderAllMermaidDiagrams() {
   // 动态导入 Mermaid
@@ -1372,21 +1628,47 @@ async function renderAllMermaidDiagrams() {
   
   // 渲染 API 架构图
   if (apiDiagramRef.value && systemArchitecture.value?.mermaid_api_diagram) {
-    const code = systemArchitecture.value.mermaid_api_diagram
+    console.log('[CodeStructureWiki] 🎨 开始渲染 API 架构图')
+    console.log('[CodeStructureWiki] mermaid_api_diagram 原始值:', systemArchitecture.value.mermaid_api_diagram)
+    let code = systemArchitecture.value.mermaid_api_diagram
       .replace(/```mermaid\n?/g, '')
       .replace(/```\n?/g, '')
       .trim()
+    
+    // 修复常见的 Mermaid 语法错误
+    code = fixMermaidCode(code)
+    
+    console.log('[CodeStructureWiki] 清理后的代码:', code)
+    console.log('[CodeStructureWiki] 代码长度:', code.length)
+    console.log('[CodeStructureWiki] 代码行数:', code.split('\n').length)
+    console.log('[CodeStructureWiki] 代码前3行:', code.split('\n').slice(0, 3))
     try {
       const id = `mermaid-api-${Date.now()}`
+      console.log('[CodeStructureWiki] 🎨 调用 mermaid.render, id:', id)
       const { svg } = await mermaid.render(id, code)
+      console.log('[CodeStructureWiki] ✅ mermaid.render 成功, SVG 长度:', svg.length)
       if (apiDiagramRef.value) {
         apiDiagramRef.value.innerHTML = svg
+        console.log('[CodeStructureWiki] ✅ API 架构图已渲染到 DOM')
+      } else {
+        console.warn('[CodeStructureWiki] ⚠️ apiDiagramRef.value 不存在，无法渲染')
       }
     } catch (error) {
-      console.error('渲染 API 架构图失败:', error)
+      console.error('[CodeStructureWiki] ❌ 渲染 API 架构图失败:', error)
+      console.error('[CodeStructureWiki] 错误详情:', error instanceof Error ? error.message : String(error))
+      console.error('[CodeStructureWiki] 失败的代码:', code)
       if (apiDiagramRef.value) {
         apiDiagramRef.value.innerHTML = `<pre class="mermaid-code">${code}</pre>`
+        console.log('[CodeStructureWiki] 已降级为显示代码块')
       }
+    }
+  } else {
+    console.warn('[CodeStructureWiki] ⚠️ 无法渲染 API 架构图:')
+    console.warn('[CodeStructureWiki]   - apiDiagramRef.value:', !!apiDiagramRef.value)
+    console.warn('[CodeStructureWiki]   - systemArchitecture.value:', !!systemArchitecture.value)
+    console.warn('[CodeStructureWiki]   - mermaid_api_diagram:', !!systemArchitecture.value?.mermaid_api_diagram)
+    if (systemArchitecture.value?.mermaid_api_diagram) {
+      console.warn('[CodeStructureWiki]   - mermaid_api_diagram 值:', systemArchitecture.value.mermaid_api_diagram)
     }
   }
 }

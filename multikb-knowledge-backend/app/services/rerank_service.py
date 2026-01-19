@@ -1,4 +1,4 @@
-﻿"""
+"""
 Rerank Service
 使用bge-reranker模型对搜索结果进行重新排序
 """
@@ -6,6 +6,7 @@ Rerank Service
 from typing import List, Dict, Any, Optional, Tuple
 import os
 import threading
+import requests
 from app.core.logging import logger
 from app.core.exceptions import CustomException, ErrorCode
 from app.config.settings import settings
@@ -42,7 +43,24 @@ class RerankService:
             self.model_path = settings.RERANK_MODEL_PATH
             # 自动检测GPU可用性，如果配置为cuda但GPU不可用，降级到cpu
             self.device = self._get_device(settings.RERANK_DEVICE)
-            self._initialize_model()
+            
+            # 远程 Xinference 配置
+            self.use_xinference = settings.RERANK_XINFERENCE_ENABLED and settings.RERANK_XINFERENCE_BASE_URL
+            self.xinference_base_url = settings.RERANK_XINFERENCE_BASE_URL
+            self.xinference_model_name = settings.RERANK_XINFERENCE_MODEL_NAME
+            self.xinference_timeout = settings.RERANK_XINFERENCE_TIMEOUT
+            self.xinference_available = False
+            
+            # 优先尝试使用远程 Xinference，如果不可用则使用本地模型
+            if self.use_xinference:
+                self._check_xinference_availability()
+            
+            # 如果远程不可用或未启用，初始化本地模型
+            if not self.use_xinference or not self.xinference_available:
+                self._initialize_model()
+            else:
+                logger.info("✅ 使用远程 Xinference Rerank 服务，跳过本地模型初始化")
+            
             self._initialized = True
     
     def _get_device(self, configured_device: str) -> str:
@@ -130,6 +148,48 @@ class RerankService:
         # 其他情况默认使用cpu
         logger.warning(f"未知的设备配置: {configured_device}，使用CPU")
         return "cpu"
+    
+    def _check_xinference_availability(self):
+        """检查远程 Xinference 服务是否可用"""
+        if not self.use_xinference or not self.xinference_base_url:
+            self.xinference_available = False
+            return
+        
+        try:
+            # 检查服务是否运行（通过 /v1/models 端点）
+            check_url = f"{self.xinference_base_url.rstrip('/')}/v1/models"
+            response = requests.get(check_url, timeout=5)
+            
+            if response.status_code == 200:
+                models = response.json()
+                # 检查目标模型是否在运行
+                model_found = False
+                if isinstance(models, dict) and "data" in models:
+                    for model in models["data"]:
+                        if model.get("model_name") == self.xinference_model_name and model.get("model_type") == "rerank":
+                            model_found = True
+                            logger.info(f"✅ 远程 Xinference Rerank 模型可用: {self.xinference_model_name} at {self.xinference_base_url}")
+                            break
+                
+                if model_found:
+                    self.xinference_available = True
+                else:
+                    logger.warning(f"⚠️ 远程 Xinference 服务可用，但未找到运行中的 rerank 模型: {self.xinference_model_name}")
+                    logger.warning(f"   将降级到本地模型")
+                    self.xinference_available = False
+            else:
+                logger.warning(f"⚠️ 远程 Xinference 服务响应异常: HTTP {response.status_code}")
+                logger.warning(f"   将降级到本地模型")
+                self.xinference_available = False
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"⚠️ 无法连接到远程 Xinference 服务: {self.xinference_base_url}")
+            logger.warning(f"   错误: {e}")
+            logger.warning(f"   将降级到本地模型")
+            self.xinference_available = False
+        except Exception as e:
+            logger.warning(f"⚠️ 检查远程 Xinference 服务时出错: {e}")
+            logger.warning(f"   将降级到本地模型")
+            self.xinference_available = False
     
     def _initialize_model(self):
         """初始化rerank模型 - 优先使用本地缓存，没有才联网下载"""
@@ -279,13 +339,96 @@ class RerankService:
             self.enabled = False
             self.model = None
     
+    def _rerank_with_xinference(
+        self,
+        query: str,
+        candidates: List[Dict[str, Any]],
+        top_k: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """使用远程 Xinference 服务进行 rerank"""
+        if not self.xinference_available or not self.xinference_base_url:
+            return None
+        
+        try:
+            # 准备文档列表
+            documents = []
+            valid_indices = []
+            for idx, candidate in enumerate(candidates):
+                content = candidate.get("content", "")
+                if content:
+                    documents.append(content)
+                    valid_indices.append(idx)
+            
+            if not documents:
+                return None
+            
+            # 调用 Xinference API
+            api_url = f"{self.xinference_base_url.rstrip('/')}/v1/rerank"
+            payload = {
+                "model": self.xinference_model_name,
+                "query": query,
+                "documents": documents,
+                "top_n": top_k or settings.RERANK_TOP_K,
+                "return_documents": False
+            }
+            
+            response = requests.post(
+                api_url,
+                json=payload,
+                timeout=self.xinference_timeout
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                results = result.get("results", [])
+                
+                # 构建分数映射
+                score_map = {}
+                for item in results:
+                    index = item.get("index")
+                    score = item.get("relevance_score", 0.0)
+                    if index is not None and index < len(valid_indices):
+                        original_idx = valid_indices[index]
+                        score_map[original_idx] = score
+                
+                # 更新候选结果的分数
+                reranked_candidates = []
+                for idx, candidate in enumerate(candidates):
+                    if idx in score_map:
+                        original_score = candidate.get("score", 0.0)
+                        rerank_score = score_map[idx]
+                        candidate["original_score"] = original_score
+                        candidate["rerank_score"] = rerank_score
+                        candidate["score"] = rerank_score
+                        reranked_candidates.append(candidate)
+                
+                # 按 rerank 分数排序
+                reranked_candidates.sort(key=lambda x: x.get("rerank_score", 0.0), reverse=True)
+                
+                # 返回 top_k 个结果
+                top_k = top_k or settings.RERANK_TOP_K
+                logger.info(f"远程 Xinference Rerank 完成，返回 {min(len(reranked_candidates), top_k)} 个结果")
+                return reranked_candidates[:top_k]
+            else:
+                logger.warning(f"远程 Xinference Rerank 请求失败: HTTP {response.status_code}, {response.text}")
+                return None
+                
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"远程 Xinference Rerank 请求异常: {e}")
+            # 标记为不可用，下次尝试使用本地模型
+            self.xinference_available = False
+            return None
+        except Exception as e:
+            logger.warning(f"远程 Xinference Rerank 处理异常: {e}")
+            return None
+    
     def rerank(
         self,
         query: str,
         candidates: List[Dict[str, Any]],
         top_k: Optional[int] = None
     ) -> List[Dict[str, Any]]:
-        """使用rerank模型对搜索结果重新排序
+        """使用rerank模型对搜索结果重新排序（优先使用远程 Xinference，失败则降级到本地）
         
         Args:
             query: 查询文本
@@ -295,8 +438,8 @@ class RerankService:
         Returns:
             重新排序后的结果列表
         """
-        if not self.enabled or self.model is None:
-            logger.debug("Rerank未启用或模型未加载，使用原始排序")
+        if not self.enabled:
+            logger.debug("Rerank未启用，使用原始排序")
             # 降级：按原始分数排序
             sorted_candidates = sorted(
                 candidates,
@@ -309,8 +452,28 @@ class RerankService:
         if not candidates:
             return []
         
+        # 优先尝试使用远程 Xinference
+        if self.use_xinference and self.xinference_available:
+            result = self._rerank_with_xinference(query, candidates, top_k)
+            if result is not None:
+                return result
+            # 如果远程失败，降级到本地模型
+            logger.info("远程 Xinference 不可用，降级到本地模型")
+        
+        # 使用本地模型
+        if self.model is None:
+            logger.debug("本地 Rerank 模型未加载，使用原始排序")
+            # 降级：按原始分数排序
+            sorted_candidates = sorted(
+                candidates,
+                key=lambda x: x.get("score", 0.0),
+                reverse=True
+            )
+            top_k = top_k or settings.RERANK_TOP_K
+            return sorted_candidates[:top_k]
+        
         try:
-            logger.info(f"开始Rerank排序，查询: {query[:50]}..., 候选数量: {len(candidates)}")
+            logger.info(f"开始本地 Rerank 排序，查询: {query[:50]}..., 候选数量: {len(candidates)}")
             
             # 准备rerank输入：query + 每个候选的content
             pairs = []
@@ -444,5 +607,8 @@ class RerankService:
             return sorted_candidates[:top_k]
     
     def is_available(self) -> bool:
-        """检查rerank模型是否可用"""
-        return self.enabled and self.model is not None
+        """检查rerank模型是否可用（远程或本地）"""
+        if not self.enabled:
+            return False
+        # 远程可用或本地模型已加载
+        return (self.use_xinference and self.xinference_available) or self.model is not None

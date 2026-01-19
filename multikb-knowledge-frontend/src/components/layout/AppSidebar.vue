@@ -55,10 +55,18 @@
         <span>图片管理</span>
       </el-menu-item>
       
-      <el-menu-item index="/code-repository">
-        <el-icon><Platform /></el-icon>
-        <span>代码库分析</span>
-      </el-menu-item>
+      <el-sub-menu index="/code-repository">
+        <template #title>
+          <el-icon><Platform /></el-icon>
+          <span>代码库分析</span>
+        </template>
+        <el-menu-item index="/code-repository">
+          <span>仓库列表</span>
+        </el-menu-item>
+        <el-menu-item index="/code-repository/search">
+          <span>查询</span>
+        </el-menu-item>
+      </el-sub-menu>
       
       <el-menu-item index="/statistics">
         <el-icon><DataAnalysis /></el-icon>
@@ -114,6 +122,11 @@ const activeMenu = computed(() => {
   
   // 知识图谱相关页面
   if (path.startsWith('/knowledge-graph')) {
+    return path
+  }
+  
+  // 代码库相关页面
+  if (path.startsWith('/code-repository')) {
     return path
   }
   

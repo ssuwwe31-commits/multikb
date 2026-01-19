@@ -193,8 +193,9 @@ class UnifiedSearchService:
                     }
                 }
             
-            # 执行搜索
-            response = await self.opensearch.client.search(
+            # 执行搜索（同步方法需要在异步上下文中在线程池执行）
+            response = await asyncio.to_thread(
+                self.opensearch.client.search,
                 index=settings.DOCUMENT_INDEX_NAME,
                 body=search_body
             )
@@ -363,8 +364,9 @@ class UnifiedSearchService:
                     }
                 }
             
-            # 执行搜索
-            response = await self.opensearch.client.search(
+            # 执行搜索（同步方法需要在异步上下文中在线程池执行）
+            response = await asyncio.to_thread(
+                self.opensearch.client.search,
                 index=CODE_FILES_INDEX,
                 body=search_body
             )
@@ -494,8 +496,9 @@ class UnifiedSearchService:
                     }
                 }
             
-            # 执行搜索
-            response = await self.opensearch.client.search(
+            # 执行搜索（同步方法需要在异步上下文中在线程池执行）
+            response = await asyncio.to_thread(
+                self.opensearch.client.search,
                 index=CODE_SYMBOLS_INDEX,
                 body=search_body
             )
@@ -683,7 +686,8 @@ class UnifiedSearchService:
                     }
                 }
                 
-                doc_response = await self.opensearch.client.search(
+                doc_response = await asyncio.to_thread(
+                    self.opensearch.client.search,
                     index=settings.DOCUMENT_INDEX_NAME,
                     body=doc_body
                 )
@@ -719,7 +723,8 @@ class UnifiedSearchService:
                     }
                 }
                 
-                file_response = await self.opensearch.client.search(
+                file_response = await asyncio.to_thread(
+                    self.opensearch.client.search,
                     index=CODE_FILES_INDEX,
                     body=file_body
                 )
@@ -754,7 +759,8 @@ class UnifiedSearchService:
                     }
                 }
                 
-                symbol_response = await self.opensearch.client.search(
+                symbol_response = await asyncio.to_thread(
+                    self.opensearch.client.search,
                     index=CODE_SYMBOLS_INDEX,
                     body=symbol_body
                 )
